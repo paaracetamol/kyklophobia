@@ -67,15 +67,17 @@ class HeldItemRenderer:
         idef   = stack.item
         itemId = idef.itemId
 
-        # l_arm / l_arm_z = visual right arm (part 3)
-        _, l_arm, _, _, _, l_arm_z = p.animangles()
+        # l_* = right arm 3
+        ps = p.pose
 
         prog = self.prog
         prog['mvp'].write(mvp.astype('f4').tobytes())
         prog['player_pos'].write(p.getpos().astype('f4').tobytes())
-        prog['byaw'].value = p.byaw
-        prog['arm_angle'].value = l_arm
-        prog['arm_z_angle'].value = l_arm_z
+        prog['byaw'].value = ps.byaw
+        prog['arm_angle'].value   = ps.l_arm
+        prog['arm_z_angle'].value = ps.l_arm_z
+        prog['arm_y_angle'].value = ps.l_arm_y
+        prog['body_y'].value      = ps.body_y
         prog['crouch'].value = p._smthcrouch
 
         if sun_dir is not None:
@@ -94,7 +96,7 @@ class HeldItemRenderer:
 
         if idef.is_block:
             prog['scale'].value = self.B_SCALE
-            prog['item_yaw'].value   = math.radians(-45.0)  # MC-style ~45° tilt
+            prog['item_yaw'].value   = math.radians(-45.0)  # ~45° tilt
             prog['item_pitch'].value = 0.0
             prog['item_roll'].value  = 0.0
             prog['hand_offset'].write(np.array([0.0, -self.ARM_H + 0.05, 0.12], dtype='f4').tobytes())
@@ -127,19 +129,22 @@ class HeldItemRenderer:
         
         
 
-    def remoterender(self, mvp, pos, yaw, pitch, itemId, arm_angle, sun_dir=None, crouch=0.0):
+    def remoterender(self, mvp, pos, yaw, pitch, itemId, arm_angle, sun_dir=None, crouch=0.0,
+                     arm_z=0.0, arm_y=0.0, body_y=0.0):
         from items.registry import REGISTRY
         if not REGISTRY.exists(itemId):
             return
-            
+
         idef = REGISTRY.get(itemId)
 
         prog = self.prog
         prog['mvp'].write(mvp.astype('f4').tobytes())
         prog['player_pos'].write(pos.astype('f4').tobytes())
         prog['byaw'].value = yaw
-        prog['arm_angle'].value = arm_angle
-        prog['arm_z_angle'].value = 0.0
+        prog['arm_angle'].value   = arm_angle
+        prog['arm_z_angle'].value = arm_z
+        prog['arm_y_angle'].value = arm_y
+        prog['body_y'].value      = body_y
         prog['crouch'].value = crouch
 
         if sun_dir is not None:

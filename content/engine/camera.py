@@ -23,7 +23,9 @@ class Camera:
         self.target_yaw   = self.yaw
         self.target_pitch = self.pitch
 
-        self._proj = None
+        self._proj  = None
+        self.fovmul = 1.0 
+        self._fovm  = None
 
         self.updatevecs()
         
@@ -44,10 +46,13 @@ class Camera:
         target = self.pos - self.front if inverted else self.pos + self.front
         view   = Matrix44.look_at(self.pos, target, self.up)
 
-        if self._proj is None:
+        if self._proj is None or abs(self.fovmul - self._fovm) > 0.001:
+
+            self._fovm = self.fovmul
             self._proj = Matrix44.perspective_projection(
-                FOV, WIN_W / WIN_H, N_PLANE, F_PLANE
+                FOV * self.fovmul, WIN_W / WIN_H, N_PLANE, F_PLANE
             )
+            
 
         return self._proj * view
         

@@ -5,8 +5,17 @@ import math
 
 from engine.camera import Camera
 from engine.physics import PhysicsEngine
-from config import BREAK_T, RAYCAST_DIST, HURT_T, KNOCK_T
-from world.blocks import WATER, WATER_FLOWING
+from entity.biped import Biped
+from config import (
+    BREAK_T, RAYCAST_DIST, HURT_T, KNOCK_T,
+    TICK, TICK_CATCHUP,
+    WALK_SPD, SPRINT_MUL, SNEAK_MUL, JUMP_YD, SPRINT_JUMP,
+    SNEAK_EYE, LADDER_CLIMB,
+    FLY_YD, FLY_SPD, FLY_SPRINT, FLY_FRIC, FLY_DRAG_Y,
+    WATER_JUMP, LEDGE_YD,
+    SPRINT_TRIG, FOOD_SPRINT, JUMP_TRIG, NOJUMP_DELAY
+)
+RUN_TRESH = 0.8      # forward stick past this counts as a run
 
 
 class Player:
@@ -20,8 +29,14 @@ class Player:
             pos = np.array(pos, dtype='f4')
 
         self.pos = pos.copy()
-        self.vel = np.array([0.0, 0.0, 0.0], dtype='f4')
-        self.knockt = 0.0   # shoved, input doesnt steer for a moment
+        self.vel = np.array([0.0, 0.0, 0.0], dtype='f4')   # per tick, blocks
+        self.knockt = 0.0
+
+        # tick pos -> render pos
+        self.opos  = self.pos.copy()
+        self.rpos  = self.pos.copy()
+        self.accum = 0.0
+        self.alpha = 0.0
 
         self.on_ground = False
         self.gmode  = 1
@@ -30,6 +45,26 @@ class Player:
         self.crouching = False
         self._smthcrouch  = 0.0
         self.world_ready  = False
+
+        # input
+        self.xa       = 0.0
+        self.ya       = 0.0
+        self.jumping  = False
+        self.sneaking = False
+        self.sinkkey  = False
+        self.shift    = False
+
+        self.hcoll    = False
+        self.yslide   = 0.0
+        self.sprtrig  = 0
+        self.jumptrig = 0
+        self.nojumpd  = 0
+        self.wasjump  = False
+        self.oya      = 0.0
+        self.inwtr    = 0
+
+        self.fov  = 1.0
+        self.ofov = 1.0
 
         self.cmode = 0
 
@@ -78,7 +113,9 @@ class Player:
         self.max_air    = 300
         self._underwater = True
 
-        self.byaw       = 0.0
+        self.anim       = Biped(self.cam.yaw)
+        self.pose       = self.anim.pose(0.0, 0.0)
+        self.byaw       = self.cam.yaw
         self.headyawoff = 0.0
 
         self._smooth_r_arm = 0.0
@@ -92,24 +129,16 @@ class Player:
         self.orb_pitch    = 30.0
 
     def inwater(self):
-        bx = int(math.floor(self.pos[0]))
-        by = int(math.floor(self.pos[1]))
-        bz = int(math.floor(self.pos[2]))
-        return self.world.chunker.getblock(bx, by, bz) in (WATER, WATER_FLOWING)
+        return self.inwtr == 1
 
     # ceil(dist - 3)
     def onfall(self):
-        if self.fly or self.gmode or self.inwater():
+        if self.fly or self.gmode or self.inwtr:
             self.falld = 0.0
             return
-        """
-        if not self.on_ground:
-            dy = self.last_pos[1] - self.pos[1]
-            if dy > 0: self.falld += dy
-            return
-        """
 
-        dy = self.last_pos[1] - self.pos[1]
+        
+        dy = float(self.opos[1] - self.pos[1])
         if dy > 0: self.falld += dy
 
         if self.on_ground and self.falld > 0:
@@ -125,10 +154,11 @@ class Player:
         self.hunger = max(0, min(self.max_hunger, int(hg)))
         return True
 
+    
     def knock(self, v):
-        self.vel[0] += v[0]
-        self.vel[1]  = max(float(self.vel[1]), v[1])
-        self.vel[2] += v[2]
+        self.vel[0] += v[0] * TICK
+        self.vel[1]  = max(float(self.vel[1]), v[1] * TICK)
+        self.vel[2] += v[2] * TICK
         self.knockt  = KNOCK_T
         self.on_ground = False
 
@@ -144,6 +174,7 @@ class Player:
         else:       self.is_breaking = True
         self.break_time = 0.0
         self.swseq      = (self.swseq + 1) & 3
+        self.anim.swingarm()
 
     def setgmode(self, m):
         self.gmode = m
@@ -192,6 +223,16 @@ class Player:
     def rcam(self):
         return self.fcam if self.freecam else self.cam
 
+    
+    def clearinput(self):
+        self.xa      = 0.0
+        self.ya      = 0.0
+        self.jumping = False
+        self.shift   = False
+        self.sinkkey = False
+
+
+    
     def oninput(self, dt):
         if self.freecam and self.fcmove:
             self.fcam.oninput(dt)
@@ -206,53 +247,241 @@ class Player:
         else:
             self.on_toggleflight = False
 
-        self.sprint = keys[K_LSHIFT]
+        
+        self.sneaking  = keys[K_LCTRL] and not self.fly
+        self.crouching = self.sneaking
+        self.sinkkey   = keys[K_LCTRL]
+        self.shift     = keys[K_LSHIFT]
 
-        if not self.fly:
-            self.crouching = keys[K_LCTRL]
-        else:
-            self.crouching = False
+        xa = 0.0
+        ya = 0.0
+        if keys[K_w]: ya += 1.0
+        if keys[K_s]: ya -= 1.0
+        if keys[K_d]: xa += 1.0
+        if keys[K_a]: xa -= 1.0
 
-        yr = math.radians(self.cam.yaw)
+        if self.sneaking:
+            xa *= SNEAK_MUL
+            ya *= SNEAK_MUL
 
-        fwd = np.array([math.cos(yr), 0.0, math.sin(yr)], dtype='f4')
-        fn  = np.linalg.norm(fwd)
-        if fn > 0: fwd /= fn
+        self.xa      = xa
+        self.ya      = ya
+        self.jumping = keys[K_SPACE]
+        # print(xa, ya, self.jumping)
 
-        rgt = np.array([math.cos(yr + math.pi/2), 0.0, math.sin(yr + math.pi/2)], dtype='f4')
-        rn  = np.linalg.norm(rgt)
-        if rn > 0: rgt /= rn
 
-        md = np.array([0.0, 0.0, 0.0], dtype='f4')
 
-        if keys[K_w]: md += fwd
-        if keys[K_s]: md -= fwd
-        if keys[K_a]: md -= rgt
-        if keys[K_d]: md += rgt
+    
+    def fovmod(self):
+        t = 1.0
+        if self.fly: t *= 1.1
+        return t * ((SPRINT_MUL if self.sprint else 1.0) + 1.0) / 2.0
+
+
+    def canfly(self):
+        return bool(self.gmode)
+
+    def cansprint(self):
+        if self.canfly(): return True
+        return self.hunger > FOOD_SPRINT
+
+
+
+
+
+
+
+    
+    def tick(self):
+        ph = self.physics
+        self.opos = self.pos.copy()
+
+        if self.sprtrig > 0: self.sprtrig -= 1
+        if self.nojumpd > 0: self.nojumpd -= 1
+
+        xa = self.xa
+        ya = self.ya
+
+        wasjump = self.wasjump
+        wasrun  = self.oya >= RUN_TRESH
+        self.wasjump = self.jumping
+        self.oya     = ya
+
+        
+        if (
+            self.on_ground and not self.sneaking and not wasrun
+            and ya >= RUN_TRESH and not self.sprint and self.cansprint()
+        ):
+            if self.sprtrig <= 0 and not self.shift: self.sprtrig = SPRINT_TRIG
+            else: self.setsprint(True)
+
+
+
+        if not self.sprint and ya >= RUN_TRESH and self.cansprint() and self.shift:
+            self.setsprint(True)
+
+        if self.sprint and (ya < RUN_TRESH or self.hcoll or not self.cansprint()):
+            self.setsprint(False)
+
+
+
+        
+        if self.canfly():
+            if not wasjump and self.jumping:
+                if self.jumptrig == 0:
+                    self.jumptrig = JUMP_TRIG
+                else:
+                    self.fly      = not self.fly
+                    self.jumptrig = 0
+        elif self.fly:
+            self.fly = False
+
+
+        if self.jumptrig > 0: self.jumptrig -= 1
+
+        self.inwtr = ph.fluidat(self.pos)
+        fric       = ph.fricat(self.pos)
+        wasgrnd    = self.on_ground
+
+        if self.knockt > 0.0: xa = ya = 0.0
+
+
+
+
 
         if self.fly:
-            if keys[K_SPACE]: md[1] += 1.0
-            if keys[K_LCTRL]: md[1] -= 1.0
+            
+            if self.sinkkey:
+                if self.sneaking:
+                    xa /= SNEAK_MUL
+                    ya /= SNEAK_MUL
+                self.vel[1] -= FLY_YD
+            if self.jumping: self.vel[1] += FLY_YD
 
-        ispr = self.sprint and not self.crouching
-        # print(md)
-        # knock
-        if self.knockt <= 0.0:
-            self.vel = self.physics.apply_movinput(
-                self.vel, md, self.on_ground, self.fly, ispr, dt
+            d0  = float(self.vel[1])
+            spd = FLY_SPD * (FLY_SPRINT if self.sprint else 1.0)
+
+            self.vel = ph.moverel(self.vel, xa, ya, self.cam.yaw, spd)
+            self.noclip()
+
+            self.vel[0] *= FLY_FRIC
+            self.vel[2] *= FLY_FRIC
+            self.vel[1]  = d0 * FLY_DRAG_Y
+
+            self.falld     = 0.0
+            self.on_ground = False
+
+        elif self.inwtr:
+            if self.jumping: self.vel[1] += WATER_JUMP
+
+            self.vel = ph.swimaccel(self.vel, xa, ya, self.cam.yaw)
+            self.domove()
+            self.vel = ph.swimdrag(self.vel, self.inwtr == 2)
+
+            
+            if self.hcoll and ph.freeat(
+                self.pos[0] + self.vel[0], 
+                self.pos[1] + LEDGE_YD, 
+                self.pos[2] + self.vel[2]
+            ):
+                self.vel[1] = LEDGE_YD
+
+        else:
+            if self.jumping and self.on_ground and self.nojumpd == 0:
+                self.jump()
+
+            spd      = WALK_SPD * (SPRINT_MUL if self.sprint else 1.0)
+            self.vel = ph.accel(
+                self.vel, xa, ya, 
+                self.cam.yaw, spd, 
+                self.on_ground, fric, 
+                self.sprint
             )
 
-            if self.crouching and not self.fly:
-                self.vel[0] *= 0.3
-                self.vel[2] *= 0.3
 
-        if not self.fly:
-            if keys[K_SPACE]:
-                if not self.on_jump and self.on_ground:
-                    self.vel = self.physics.apply_jump(self.vel, self.on_ground)
-                    self.on_jump = True
-            else:
-                self.on_jump = False
+            ladder = ph.onladder(self.pos)
+            if ladder:
+                self.vel   = ph.ladderclamp(self.vel, self.sneaking)
+                self.falld = 0.0
+
+            self.domove()
+
+            #ladder
+            if ladder and self.hcoll: self.vel[1] = LADDER_CLIMB
+
+            self.vel = ph.drag(self.vel, wasgrnd, fric)
+
+        
+        if not self.fly: self.vel = ph.pushout(self.pos, self.vel)
+
+        
+        self.yslide = SNEAK_EYE if self.sneaking else 0.0
+
+        self.anim.tick(
+            self.pos[0], self.pos[2],
+            self.opos[0], self.opos[2],
+            self.cam.yaw, self.on_ground
+        )
+
+        self.onfall()
+
+        
+
+
+        self.ofov = self.fov
+        self.fov += (self.fovmod() - self.fov) * 0.5
+
+
+
+
+
+
+    def jump(self):
+        self.vel[1] = JUMP_YD
+        if self.sprint:
+            yr = math.radians(self.cam.yaw)
+            self.vel[0] += math.cos(yr) * SPRINT_JUMP
+            self.vel[2] += math.sin(yr) * SPRINT_JUMP
+        self.nojumpd = NOJUMP_DELAY
+        
+
+
+    def setsprint(self, on):
+        self.sprint = on
+
+
+    
+    def noclip(self):
+        self.pos       = self.pos + self.vel
+        self.hcoll     = False
+        self.on_ground = False
+
+
+    def domove(self):
+        ph = self.physics
+        fp, hc, grnd, ceil_, sl = ph.movebox(
+            self.pos, self.vel, self.on_ground, self.sneaking
+        )
+        self.pos   = fp
+        self.hcoll = hc
+        # print(fp, hc, grnd, sl)
+
+        # if sl > 0.0: self.yslide += sl   # lce ySlideOffset, smooths the step pop
+
+        if hc:
+            if not ph.freeat(self.pos[0] + self.vel[0], self.pos[1], self.pos[2]): self.vel[0] = 0.0
+            if not ph.freeat(self.pos[0], self.pos[1], self.pos[2] + self.vel[2]): self.vel[2] = 0.0
+
+        if ceil_ and self.vel[1] > 0: self.vel[1] = 0.0
+
+        self.on_ground = grnd or ph.grounded(self.pos)
+        if self.on_ground and self.vel[1] < 0: self.vel[1] = 0.0
+
+
+    # h speed
+    def gspeed(self):
+        return math.sqrt(self.vel[0]**2 + self.vel[2]**2) / TICK
+
 
     def update(self, dt):
         self._last_dt  = dt
@@ -277,64 +506,36 @@ class Player:
 
         self.last_pos = self.pos.copy()
 
-        self.vel, self.on_ground = self.physics.apply_physics(
-            self.pos, self.vel, self.on_ground, self.fly, dt
-        )
-        # print(self.vel)
+        self.accum += dt
+        n = 0
+        while self.accum >= TICK and n < TICK_CATCHUP:
+            self.accum -= TICK
+            n          += 1
+            self.tick()
 
-        if self.fly:
-            self.pos += self.vel * dt
-        else:
-            mv = self.vel * dt
-            np2, am, ghit, _ = self.physics.check_coll(self.pos, mv)
-            self.pos = np2
+        if n >= TICK_CATCHUP: self.accum = 0.0
 
-            if ghit:
-                self.on_ground = True
-                self.vel[1] = 0
-            else:
-                self.on_ground = self.physics.grounded(self.pos)
-                if self.on_ground and self.vel[1] < 0.5:
-                    self.vel[1] = 0
+        self.alpha = self.accum / TICK
+        self.rpos  = self.opos + (self.pos - self.opos) * self.alpha
 
-            if dt > 0:
-                for i in range(3):
-                    if abs(mv[i]) > 0.0001 and abs(am[i]) < 0.0001:
-                        self.vel[i] = 0
+        self.cam.fovmul = self.ofov + (self.fov - self.ofov) * self.alpha
 
-        self.onfall()
-
-        ep   = self.pos.copy()
-        coff = 0.125 if self.crouching else 0.0
-        ep[1] += self.physics.eye_h - coff
+        ep    = self.rpos.copy()
+        ep[1] += self.physics.eye_h - self.yslide
         yr    = math.radians(self.cam.yaw)
         ep[0] += math.cos(yr) * self.physics.eye_f
         ep[2] += math.sin(yr) * self.physics.eye_f
         self.eye = ep.copy()
 
-        speed = math.sqrt(self.vel[0]**2 + self.vel[2]**2)
+        speed = self.gspeed()
         ta    = 0.05 if self.on_ground and speed > 0.1 and self.cmode == 0 else 0.0
 
         if self.on_ground and speed > 0.1 and self.cmode == 0:
             self.bob_time += speed * dt * 1.5
 
-        if speed > 0.1:
-            self.limb_swing += speed * dt * 3.0
-
-        if self.cmode != 3:
-            # follow head yaw, snap >= 45
-            ydiff = self.cam.yaw - self.byaw
-            while ydiff >  180: ydiff -= 360
-            while ydiff < -180: ydiff += 360
-            if speed > 0.1:
-                self.byaw += ydiff * min(8.0 * dt, 1.0)
-            elif abs(ydiff) > 45.0:
-                exc = ydiff - (45.0 if ydiff > 0 else -45.0)
-                self.byaw += exc * min(4.0 * dt, 1.0)
-            self.headyawoff = self.cam.yaw - self.byaw
-            while self.headyawoff >  180: self.headyawoff -= 360
-            while self.headyawoff < -180: self.headyawoff += 360
-            self.headyawoff = max(-70, min(70, self.headyawoff))
+        self.pose       = self.anim.pose(self.alpha, self.cam.pitch, self.crouching)
+        self.byaw       = self.pose.byaw
+        self.headyawoff = self.pose.headyaw
 
         self.bob_amp += (ta - self.bob_amp) * 10.0 * dt
         
@@ -344,8 +545,8 @@ class Player:
         if self.cmode == 0 and self.bob_amp > 0.001:
             bob_x = math.sin(self.bob_time) * self.bob_amp
             bob_y = math.sin(self.bob_time * 2.0) * self.bob_amp
-            ceil_y = self.pos[1] + self.physics.ph + 0.1
-            if self.physics.isblocksolid(self.pos[0], ceil_y, self.pos[2]):
+            ceil_y = self.rpos[1] + self.physics.ph + 0.1
+            if self.physics.isblocksolid(self.rpos[0], ceil_y, self.rpos[2]):
                 if bob_y > 0: bob_y *= 0.2
             ep[0] += math.cos(yr) * bob_x
             ep[2] += math.sin(yr) * bob_x
@@ -421,19 +622,14 @@ class Player:
                 self.is_placing  = False
                 self.break_time  = 0.0
 
+    
     def animangles(self):
-        # shader: left leg NEGATED -> pass SAME val for both legs to get opposition
-        # r_arm(part2) = mcmodel leftArm
-        # l_arm(part3) = mcmodel rightArm
-        RAD2DEG = 180.0 / math.pi
-
-        speed = math.sqrt(self.vel[0]**2 + self.vel[2]**2)
-        lsw = self.limb_swing
-        lsa = min(speed / 4.3, 1.0) if speed > 0.1 else 0.0
+        p = self.pose
+        return (p.r_arm, p.l_arm, p.r_leg, p.l_leg, p.r_arm_z, p.l_arm_z)
 
         """
         def animangles(self):
-            speed = math.sqrt(self.vel[0]**2 + self.vel[2]**2)
+            speed = self.gspeed()
             lsa   = min(speed / 4.3, 1.0) if speed > 0.1 else 0.0
             phase = self.limb_swing * 0.6662
             RAD2DEG = 180.0 / math.pi
@@ -442,60 +638,6 @@ class Player:
             r_leg = math.cos(phase)            * 1.4 * lsa         * RAD2DEG
             return (r_arm, l_arm, r_leg, r_leg, 0.0, 0.0)
         """
-
-        if not self.fly:
-            phase = lsw * 0.6662
-            r_arm = math.cos(phase + math.pi) * 2.0 * lsa * 0.5 * RAD2DEG
-            l_arm = math.cos(phase)            * 2.0 * lsa * 0.5 * RAD2DEG
-            r_leg = math.cos(phase)            * 1.4 * lsa * RAD2DEG
-            l_leg = r_leg  # shader negates left leg
-        else:
-            cycle = self.anim_time * 3.0
-            r_arm = math.sin(cycle) * 20.0
-            l_arm = -math.sin(cycle) * 20.0
-            r_leg = math.sin(cycle) * 25.0
-            l_leg = r_leg
-
-        r_arm_z = 0.0
-        l_arm_z = 0.0
-
-        
-        
-        # idle sway
-        age = self.anim_time * 20.0
-        l_arm += math.sin(age * 0.067) * 0.05 * RAD2DEG
-        r_arm -= math.sin(age * 0.067) * 0.05 * RAD2DEG
-        l_arm_z += (math.cos(age * 0.09) * 0.05 + 0.05) * RAD2DEG
-        r_arm_z -= (math.cos(age * 0.09) * 0.05 + 0.05) * RAD2DEG
-        
-        
-        
-
-        
-        if self._smthcrouch > 0.01:
-            cac = self._smthcrouch * 0.2 * RAD2DEG
-            # cac = math.sin(self._smthcrouch * math.pi * 0.5) * 25.0
-            r_arm += cac;  l_arm += cac # crouch arm
-            
-            
-            
-            
-            
-
-        # punch arc 
-        # part3 = mcmodel rightArm
-        if self.is_breaking or self.is_placing:
-            progress = min(self.break_time / self.break_duration, 1.0)
-            inv  = 1.0 - progress
-            var8 = 1.0 - (inv * inv * inv * inv)   # MC easing
-            var9 = math.sin(var8 * math.pi)
-            hpr  = math.radians(-self.cam.pitch)
-            var10 = math.sin(progress * math.pi) * -(hpr - 0.7) * 0.75
-            l_arm   -= (var9 * 1.2 + var10) * RAD2DEG
-            l_arm_z += math.sin(progress * math.pi) * -0.4 * RAD2DEG
-
-        # print(r_arm, l_arm, r_leg)
-        return (r_arm, l_arm, r_leg, l_leg, r_arm_z, l_arm_z)
 
 
 
@@ -520,10 +662,10 @@ class Player:
         if self.cmode == 3:
             self.orbital_distance = max(2.0, min(20.0, self.orbital_distance - y * 0.5))
 
-    def getpos(self): return self.pos.copy()
+    def getpos(self): return self.rpos.copy()
 
     def eyepos(self): return self.eye.copy()
-    def getvel(self): return self.vel.copy()
+    def getvel(self): return self.vel.copy() / TICK
     
     
     
@@ -535,6 +677,10 @@ class Player:
         self.pos = np.array(pos, dtype='f4')
         self.vel = np.array([0.0, 0.0, 0.0], dtype='f4')
         self.falld = 0.0
+        self.opos   = self.pos.copy()
+        self.rpos   = self.pos.copy()
+        self.accum  = 0.0
+        self.yslide = 0.0
         ep    = self.pos.copy()
         ep[1] += self.physics.eye_h
         yr    = math.radians(self.cam.yaw)
@@ -575,11 +721,7 @@ class Player:
         return None
 
     def targetblock(self, max_dist=RAYCAST_DIST):
-        start    = self.pos.copy()
-        start[1] += self.physics.eye_h
-        yr        = math.radians(self.cam.yaw)
-        start[0] += math.cos(yr) * self.physics.eye_f
-        start[2] += math.sin(yr) * self.physics.eye_f
+        start = self.eye.copy()
 
         direction = self.cam.front
         step = 0.05
@@ -627,10 +769,9 @@ class Player:
         py = block_pos[1] + face[1]
         pz = block_pos[2] + face[2]
 
-        ep    = self.pos.copy()
-        ep[1] += self.physics.eye_h
+        ep = self.eye.copy()
 
-        fy = self.pos[1]
+        fy = self.rpos[1]
         hy = fy + self.physics.ph
 
         if (abs(px - ep[0]) < 0.6 and

@@ -33,7 +33,6 @@ EMPTY_LIGHT = np.zeros((CHUNK_SZ, CHUNK_H, CHUNK_SZ), dtype=np.uint8)
 class PerlinNoise:
     def __init__(self, seed=0):
         # no idea
-        # sourced from rips of MC beta 1.7.3
         p_base = np.array([
             151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
             140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,

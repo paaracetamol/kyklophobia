@@ -11,6 +11,8 @@ from network.protocol import (
 )
 from config import SV_PORT, SV_TIMEOUT, CL_UPD_INT, HURT_T
 from identity import whoami, get_tokenbytes
+from entity.biped import Biped
+from config import TICK
 import _respath
 
 
@@ -38,6 +40,11 @@ class RemotePlayer:
         self.swseq  = -1
         self.hurtt  = 0.0
         self.skin   = None
+
+        self.anim  = Biped()
+        self.pose  = self.anim.pose(0.0, 0.0)
+        self.accum = 0.0
+        self.apos  = pos.copy()
 
 
 
@@ -363,7 +370,9 @@ class NetworkClient:
                         sq = (afl >> 4) & 3
                         if sq != p.swseq:
                             p.swseq = sq
-                            if afl & 1: p.swingt = 0.3
+                            if afl & 1:
+                                p.swingt = 0.3
+                                p.anim.swingarm()
 
                         p.aflags = afl
                         p.lupd   = now
@@ -585,7 +594,35 @@ class NetworkClient:
                         j.yaw      = j.tyaw
                         j.pitch    = j.tpitch
 
+                self.animtick(j, dt)
+
             for i in stale: del self.rpl[i]
+
+
+
+    
+    def animtick(self, j, dt):
+        j.accum += dt
+        n = int(j.accum / TICK)
+
+        if n > 5:
+            n = 5
+            j.accum = 0.0
+        else:
+            j.accum -= n * TICK
+
+
+        
+        if n:
+            step = (j.pos - j.apos) / n
+            for _ in range(n):
+                ap = j.apos + step
+                j.anim.tick(ap[0], ap[2], j.apos[0], j.apos[2], j.yaw)
+                j.apos = ap
+
+        j.pose = j.anim.pose(j.accum / TICK, j.pitch, bool(j.aflags & 2))
+
+        
 
 
     def isconn(self):

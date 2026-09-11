@@ -15,7 +15,7 @@ from lconst import (
 )
 from ldata    import get_reasourceactive, getpname, setpname
 from lwidgets import nine_slice  # noqa
-from lplayer  import MiniPlayer
+from lplayer  import MiniPlayer, glctx
 
 sys.path.insert(0, UI_DIR)
 from bfont import Font
@@ -88,6 +88,7 @@ class Launcher:
 
     def __init__(self):
         logformat.setup()
+        glctx()
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
         ico = pygame.image.load('content/icon.ico') 
@@ -95,7 +96,8 @@ class Launcher:
         pygame.display.set_caption(WINDOW_TITLE)
 
         self.loadassets()
-        setpname(getpname())   # make sure name.txt exists for easy access
+        setpname(getpname())
+        
         self.mini    = MiniPlayer(os.path.join(RESOURCE_DIR, "player", "skin.png"))
         self.running = True
         self.clock   = pygame.time.Clock()

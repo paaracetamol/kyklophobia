@@ -284,10 +284,7 @@ class TNTEntity(BlockEntity):
         strength = (1.0 - dist / BLAST_KNOCK_RAD) * MAX_KNOCK_FORCE
         nx, ny, nz = dx / dist, dy / dist, dz / dist
         # ny = (ny + 1.0) * 0.5
-        p.vel += np.array(
-            [nx * strength, ny * strength + 6.0, nz * strength],
-            dtype='f4',
-        )
+        p.knock((nx * strength, ny * strength + 6.0, nz * strength))
 
 
 

@@ -12,6 +12,15 @@ sys.path.pop(0)
 _MODEL_JSON = os.path.join(CONTENT_DIR, "entity", "player", "model.json")
 _SH_DIR     = os.path.join(CONTENT_DIR, "shaders")
 
+_ctx = None
+
+
+
+def glctx():
+    global _ctx
+    if _ctx is None: _ctx = moderngl.create_standalone_context()
+    return _ctx
+
 PART_BODY  = 0.0
 PART_HEAD  = 1.0
 PART_R_ARM = 2.0
@@ -30,7 +39,7 @@ class MiniPlayer:
 
     def __init__(self, skinpath, sz=220):
         self.sz  = sz
-        self.ctx = moderngl.create_standalone_context()
+        self.ctx = glctx()
 
         with open(_MODEL_JSON) as f:
             self.md = json.load(f)
@@ -42,21 +51,27 @@ class MiniPlayer:
         inter[:, 3:5] = uvs
         inter[:, 5:8] = norms
         inter[:, 8]   = pts
-        self.vbo = self.ctx.buffer(inter.tobytes())
 
-        self.skin = self._skin(skinpath)
+        with self.ctx:
+            self.vbo = self.ctx.buffer(inter.tobytes())
 
-        self.prog = self.ctx.program(
-            vertex_shader   = _sh("inv.vert"),
-            fragment_shader = _sh("inv.frag")
-        )
-        self.vao = self.ctx.vertex_array(self.prog, [
-            (self.vbo, '3f 2f 3f 1f', 'in_pos', 'in_uv', 'in_norm', 'in_part_id'),
-        ])
+            self.skin = self._skin(skinpath)
 
-        self.ctex = self.ctx.texture((sz, sz), 4)
-        self.dtex = self.ctx.depth_renderbuffer((sz, sz))
-        self.fbo  = self.ctx.framebuffer(self.ctex, self.dtex)
+            self.prog = self.ctx.program(
+                vertex_shader   = _sh("inv.vert"),
+                fragment_shader = _sh("inv.frag")
+            )
+            self.vao = self.ctx.vertex_array(self.prog, [
+                (
+                    self.vbo, '3f 2f 3f 1f', 
+                    'in_pos', 'in_uv', '
+                    in_norm', 'in_part_id'
+                ),
+            ])
+
+            self.ctex = self.ctx.texture((sz, sz), 4)
+            self.dtex = self.ctx.depth_renderbuffer((sz, sz))
+            self.fbo  = self.ctx.framebuffer(self.ctex, self.dtex)
 
         self.yaw   = 180.0
         self.pitch = 0.0
@@ -152,24 +167,27 @@ class MiniPlayer:
 
         mvp = np.identity(4, dtype='f4')
 
-        self.fbo.use()
-        self.ctx.clear(0.0, 0.0, 0.0, 0.0)
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        self.ctx.disable(moderngl.CULL_FACE)
+        with self.ctx:
+            self.fbo.use()
+            self.ctx.clear(0.0, 0.0, 0.0, 0.0)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.CULL_FACE)
 
-        self.skin.use(0)
-        self.prog['mvp'].write(mvp.tobytes())
-        self.prog['model_yaw'].value    = self.yaw
-        self.prog['model_pitch'].value  = -self.pitch
-        self.prog['model_scale'].value  = self.scale
-        self.prog['skin_texture'].value = 0
-        self.vao.render(moderngl.TRIANGLES)
+            self.skin.use(0)
+            self.prog['mvp'].write(mvp.tobytes())
+            self.prog['model_yaw'].value    = self.yaw
+            self.prog['model_pitch'].value  = -self.pitch
+            self.prog['model_scale'].value  = self.scale
+            self.prog['skin_texture'].value = 0
+            self.vao.render(moderngl.TRIANGLES)
 
-        data = self.fbo.read(components=4, alignment=1)
+            data = self.fbo.read(components=4, alignment=1)
+
         surf = pygame.image.frombuffer(data, (self.sz, self.sz), "RGBA")
         return pygame.transform.flip(surf, False, True)
 
 
     def release(self):
-        for i in [self.vbo, self.skin, self.ctex, self.fbo, self.vao]:
-            i.release()
+        with self.ctx:
+            for i in [self.vbo, self.skin, self.ctex, self.fbo, self.vao]:
+                i.release()

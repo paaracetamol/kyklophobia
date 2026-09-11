@@ -195,9 +195,10 @@ class PlayerModel:
     # limb angles -> single mat4 p part
     # player.vert
     def posemats(
-        self, 
+        self,
         pitch=0.0, r_arm=0.0, l_arm=0.0, r_leg=0.0, l_leg=0.0,
-        r_arm_z=0.0, l_arm_z=0.0, headyawoff=0.0, crouch=0.0
+        r_arm_z=0.0, l_arm_z=0.0, headyawoff=0.0, crouch=0.0,
+        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0
     ):
         m   = mident()
         rad = np.radians
@@ -209,13 +210,24 @@ class PlayerModel:
         aox = self.BODY_W / 2 + self.ARM_W / 2
         lhw = self.LEG_W / 2
 
-        m[int(PART_R_ARM)] = atpivot(rotz(rad(r_arm_z)) @ rotx(rad(r_arm)), ( aox, sdy, 0))
-        m[int(PART_L_ARM)] = atpivot(rotz(rad(l_arm_z)) @ rotx(rad(l_arm)), (-aox, sdy, 0))
+        m[int(PART_R_ARM)] = atpivot(
+            rotz(rad(r_arm_z)) @ roty(rad(r_arm_y)) @ rotx(rad(r_arm)), ( aox, sdy, 0)
+        )
+        m[int(PART_L_ARM)] = atpivot(
+            rotz(rad(l_arm_z)) @ roty(rad(l_arm_y)) @ rotx(rad(l_arm)), (-aox, sdy, 0)
+        )
         m[int(PART_R_LEG)] = atpivot(rotx(rad(r_leg)),  ( lhw, hy, 0))
         m[int(PART_L_LEG)] = atpivot(rotx(rad(-l_leg)), (-lhw, hy, 0))
         m[int(PART_HEAD)]  = atpivot(
             roty(rad(headyawoff)) @ rotx(rad(-pitch)), (0, sdy, 0)
         )
+
+        
+        if body_y:
+            bm = atpivot(roty(rad(body_y)), (0, sdy, 0))
+            m[int(PART_BODY)] = bm
+            m[int(PART_R_ARM)] = bm @ m[int(PART_R_ARM)]
+            m[int(PART_L_ARM)] = bm @ m[int(PART_L_ARM)]
 
 
         
@@ -237,7 +249,8 @@ class PlayerModel:
     def render(
         self, mvp, pos, yaw, pitch=0.0, sun_pos=None,
         r_arm=0.0, l_arm=0.0, r_leg=0.0, l_leg=0.0, r_arm_z=0.0, l_arm_z=0.0,
-        headyawoff=0.0, crouch=0.0, _hidehead=False, tex=None, hurt=0.0
+        headyawoff=0.0, crouch=0.0, _hidehead=False, tex=None, hurt=0.0,
+        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0
     ):
         """
         (tex or self.skin_tex).use(0)
@@ -265,6 +278,7 @@ class PlayerModel:
         mats = self.posemats(
             pitch, r_arm, l_arm, r_leg, l_leg,
             r_arm_z, l_arm_z, headyawoff, crouch,
+            r_arm_y, l_arm_y, body_y,
         )
         self.model.render(
             mvp, pos, yaw, mats,

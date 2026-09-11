@@ -706,6 +706,8 @@ class VoxelWorld:
             if not self.oninv and not self.onchat:
                 self.p.oninput(dt)
                 self.p.onmouse()
+            else:
+                self.p.clearinput()
                 
                 
                 
@@ -950,28 +952,29 @@ class VoxelWorld:
                 
                 
             
-            r_arm, l_arm, r_leg, l_leg, r_arm_z, l_arm_z = self.p.animangles()
+            ps     = self.p.pose
             ppos   = self.p.getpos()
-            pbyaw  = self.p.byaw
             ppitch = self.p.cam.pitch
+
             
-            # head pitch compensated for body crouch tilt
-            ppitch   += self.p._smthcrouch * 28.6479
-            phead_yaw = self.p.headyawoff
-            
+            ppitch += self.p._smthcrouch * 28.6479
+
             self.ctx.enable(moderngl.DEPTH_TEST)
             self.ctx.disable(moderngl.CULL_FACE)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-            
-            self.pmodel.render(mvp, ppos, pbyaw, ppitch, self.sun_pos,
-                r_arm=r_arm,
-                l_arm=l_arm, 
-                r_leg=r_leg, 
-                l_leg=l_leg,
-                r_arm_z=r_arm_z, 
-                l_arm_z=l_arm_z,
-                headyawoff=phead_yaw,
+
+            self.pmodel.render(mvp, ppos, ps.byaw, ppitch, self.sun_pos,
+                r_arm=ps.r_arm,
+                l_arm=ps.l_arm,
+                r_leg=ps.r_leg,
+                l_leg=ps.l_leg,
+                r_arm_z=ps.r_arm_z,
+                l_arm_z=ps.l_arm_z,
+                r_arm_y=ps.r_arm_y,
+                l_arm_y=ps.l_arm_y,
+                body_y=ps.body_y,
+                headyawoff=ps.headyaw,
                 crouch=self.p._smthcrouch,
                 _hidehead=(self.p.cmode == 0 and not self.p.freecam),
                 hurt=max(0.0, self.p.hurtt / HURT_T)
@@ -1326,11 +1329,8 @@ class VoxelWorld:
                 self.pmodpay = None
             spawn = self._pspawn if self._pspawn is not None else np.array([0.0, 80.0, 0.0], dtype='f4')
             self._pspawn = None
-            self.p.pos = spawn
-            self.p.vel = np.array([0.0, 0.0, 0.0], dtype='f4')
-            ep = self.p.pos.copy()
-            ep[1] += self.p.physics.eye_h
-            self.p.cam.pos = ep
+
+            self.p.teleport(spawn)
             cx, cz = self.p.chunkpos(CHUNK_SZ)
             self.chunker.updateloads(cx, cz)
             self.ui.chatmsg("reset complete!", color=(200, 255, 200))
@@ -1587,25 +1587,8 @@ class VoxelWorld:
             
             
 
-            spd = math.sqrt(p.velocity[0]**2 + p.velocity[2]**2)
-            p.atime += dt
-            ra, la, rl, ll = 0.0, 0.0, 0.0, 0.0
-            
-            
-            if spd > 0.1:
-                wc = p.atime * 4.0
-                ra = math.sin(wc) * 50.0
-                la = -math.sin(wc) * 50.0
-                rl = math.sin(wc) * 50.0
-                ll = rl  
-                
-                
-            if p.swingt > 0:
-                
-                swt = p.swingt / 0.3  # normalize 0..1
-                la  = math.sin(swt * math.pi) * -80.0
-                
-                
+            ps = p.pose
+
             if p.skin is not None:
                 old = self.rskins.pop(p.pid, None)
                 if old: old.release()
@@ -1613,10 +1596,17 @@ class VoxelWorld:
                 p.skin = None
 
             crch = 1.0 if p.aflags & 2 else 0.0
+            ppit = p.pitch + crch * 28.6479
+            
 
             self.pmodel.render(
-                mvp, pos, p.yaw, p.pitch, self.sun_pos,
-                r_arm=ra, l_arm=la, r_leg=rl, l_leg=ll,
+                mvp, pos, ps.byaw, ppit, self.sun_pos,
+                r_arm=ps.r_arm, l_arm=ps.l_arm,
+                r_leg=ps.r_leg, l_leg=ps.l_leg,
+                r_arm_z=ps.r_arm_z, l_arm_z=ps.l_arm_z,
+                r_arm_y=ps.r_arm_y, l_arm_y=ps.l_arm_y,
+                body_y=ps.body_y,
+                headyawoff=ps.headyaw,
                 crouch=crch, tex=self.rskins.get(p.pid),
                 hurt=max(0.0, p.hurtt / HURT_T)
             )
@@ -1624,8 +1614,9 @@ class VoxelWorld:
             if p._held > 0 and self.render_helditem:
                 self.render_helditem.remoterender(
                     mvp, pos,
-                    p.yaw, p.pitch, p._held,
-                    la, self.sun_pos, crch
+                    ps.byaw, p.pitch, p._held,
+                    ps.l_arm, self.sun_pos, crch,
+                    arm_z=ps.l_arm_z, arm_y=ps.l_arm_y, body_y=ps.body_y
                 )
                 
             self.rendertag(mvp, pos, p.nm)

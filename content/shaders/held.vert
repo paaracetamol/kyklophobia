@@ -9,6 +9,8 @@ uniform vec3 player_pos;
 uniform float byaw;
 uniform float arm_angle;
 uniform float arm_z_angle;
+uniform float arm_y_angle;
+uniform float body_y;
 uniform float crouch;
 uniform float scale;
 uniform vec3 hand_offset;
@@ -51,14 +53,25 @@ void main() {
 
     pos += hand_offset;
 
-    // R_x(arm) R_z(zswing) @ shoulder pivot
+    // R_z(zswing) R_y(yswing) R_x(arm) @ shoulder pivot, same order as posemats
     mat3 arx = rx(radians(arm_angle));
     pos = arx * pos;  norm = arx * norm;
+
+    mat3 ary = ry(radians(arm_y_angle));
+    pos = ary * pos;  norm = ary * norm;
 
     mat3 arz = rz(radians(arm_z_angle));
     pos = arz * pos;  norm = arz * norm;
 
     pos += vec3(-ARM_OX, shoulder_y, 0.0);
+
+    // torso twist
+    if (body_y != 0.0) {
+        mat3 br  = ry(radians(body_y));
+        vec3 shp = vec3(0.0, shoulder_y, 0.0);
+        pos  = br * (pos - shp) + shp;
+        norm = br * norm;
+    }
 
     if (crouch > 0.01) {
         mat3 cr  = rx(crouch * 0.5);

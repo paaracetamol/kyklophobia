@@ -66,10 +66,57 @@ SV_PVP            = True
 CL_UPD_INT        = 0.033
 
 
-P_W               = 0.55
-P_H               = 1.75
-P_EYE_H           = 1.75
-P_EYE_F           = 0.25
+P_W               = 0.6
+P_H               = 1.8
+P_EYE_H           = 1.62
+P_EYE_F           = 0.0
+
+# tick model
+# p/20hz tick
+TICK              = 0.05
+TICK_CATCHUP      = 5
+
+GRAV              = 0.08
+DRAG_Y            = 0.98
+FRIC_AIR          = 0.91
+FRIC_TILE         = 0.6          # block slip *0.91 -> 0.546
+FRIC_ICE          = 0.98
+FRIC_SLIME        = 0.8
+ACC_BASE          = 0.16277136
+AIR_ACC           = 0.02
+AIR_SPRINT        = 0.3          # air acc += air acc * AIR_SPRINT
+WALK_SPD          = 0.1
+SPRINT_MUL        = 1.3
+SNEAK_MUL         = 0.3
+JUMP_YD           = 0.42
+SPRINT_JUMP       = 0.2
+STEP_H            = 0.6
+SNEAK_EYE         = 0.08         # eye dip, 1.62 -> 1.54
+
+FLY_SPD           = 0.05
+FLY_YD            = 0.15
+FLY_SPRINT        = 2.0
+FLY_DRAG_Y        = 0.6
+FLY_FRIC          = 0.91
+
+WATER_ACC         = 0.02
+WATER_DRAG        = 0.8
+WATER_GRAV        = 0.02
+WATER_JUMP        = 0.04
+LAVA_DRAG         = 0.5
+LEDGE_YD          = 0.3
+
+LADDER_CLAMP      = 0.15
+LADDER_CLIMB      = 0.2
+
+SPRINT_TRIG       = 7            # double tap window
+FOOD_SPRINT       = 6
+JUMP_TRIG         = 7            # double tap window
+NOJUMP_DELAY      = 10
+PUSHOUT           = 0.1
+
+
+# old model
 GRAVITY           = -32.0
 TERM_V            = -78.4
 JUMP_V            = 10.0
