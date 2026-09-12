@@ -64,8 +64,8 @@ class MiniPlayer:
             self.vao = self.ctx.vertex_array(self.prog, [
                 (
                     self.vbo, '3f 2f 3f 1f', 
-                    'in_pos', 'in_uv', '
-                    in_norm', 'in_part_id'
+                    'in_pos', 'in_uv', 
+                    'in_norm', 'in_part_id'
                 ),
             ])
 
