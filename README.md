@@ -69,7 +69,8 @@ first run, cache per-world in `saves/<world>/cache` (via `NUMBA_CACHE_DIR`). sub
 launches of that world fine. each world keeps its own cache so loading a second world
 doesnt evict the first
 
-> [!NOTE] if world doesnt render, double esc (exit) and reload. fps also bad on first few run
+> [!NOTE] 
+> if world doesnt render, double esc (exit) and reload. fps also bad on first few run
 
 
 ## layout
