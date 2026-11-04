@@ -963,22 +963,29 @@ class VoxelWorld:
             self.ctx.disable(moderngl.CULL_FACE)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+            
 
-            self.pmodel.render(mvp, ppos, ps.byaw, ppitch, self.sun_pos,
-                r_arm=ps.r_arm,
-                l_arm=ps.l_arm,
-                r_leg=ps.r_leg,
-                l_leg=ps.l_leg,
-                r_arm_z=ps.r_arm_z,
-                l_arm_z=ps.l_arm_z,
-                r_arm_y=ps.r_arm_y,
-                l_arm_y=ps.l_arm_y,
-                body_y=ps.body_y,
-                headyawoff=ps.headyaw,
-                crouch=self.p._smthcrouch,
-                _hidehead=(self.p.cmode == 0 and not self.p.freecam),
-                hurt=max(0.0, self.p.hurtt / HURT_T)
-            )
+            
+            fpview = self.p.cmode == 0 and not self.p.freecam
+            if not fpview:
+                self.pmodel.render(
+                    mvp, ppos, 
+                    ps.byaw, ppitch, 
+                    self.sun_pos,
+                    r_arm=ps.r_arm,
+                    l_arm=ps.l_arm,
+                    r_leg=ps.r_leg,
+                    l_leg=ps.l_leg,
+                    r_arm_z=ps.r_arm_z,
+                    l_arm_z=ps.l_arm_z,
+                    r_arm_y=ps.r_arm_y,
+                    l_arm_y=ps.l_arm_y,
+                    body_y=ps.body_y,
+                    headyawoff=ps.headyaw,
+                    crouch=self.p._smthcrouch,
+                    _hidehead=(self.p.cmode == 0 and not self.p.freecam),
+                    hurt=max(0.0, self.p.hurtt / HURT_T)
+                )
             
             
             
@@ -986,7 +993,16 @@ class VoxelWorld:
             
             
             
-            self.render_helditem.render(mvp, self.p, self.sun_dir)
+            if fpview:
+                ey = self.p.eyepos()
+                sl, bl = self.chunker.getlight(int(math.floor(ey[0])), int(math.floor(ey[1])), int(math.floor(ey[2])))
+                lt = self.lightmap.px[sl, bl]
+                self.render_helditem.renderfp(
+                    self.pmodel, self.p, self.sun_dir,
+                    (lt[0] / 255.0, lt[1] / 255.0, lt[2] / 255.0)
+                )
+            else:
+                self.render_helditem.render(mvp, self.p, self.sun_dir)
             
             self.ctx.enable(moderngl.CULL_FACE)
             self.ctx.disable(moderngl.BLEND)

@@ -5,6 +5,7 @@ in vec3 v_world_pos;
 uniform sampler2D tex;
 uniform vec3 sun_pos;
 uniform float hurt;
+uniform vec3 lite;
 out vec4 f_color;
 
 void main() {
@@ -30,7 +31,7 @@ void main() {
     vec3 sd = normalize(sun_pos);
     float sl = clamp(dot(n, sd) * 0.4 + 0.6, 0.4, 1.0);
 
-    vec3 color = t.rgb * (br * sl);
+    vec3 color = t.rgb * (br * sl) * lite;
     color = mix(color, vec3(1.0, 0.0, 0.0), hurt * 0.5);
 
 

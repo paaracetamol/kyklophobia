@@ -103,6 +103,12 @@ class Player:
         self.inv = [{'id': bid, 'count': 64} for bid in bids]
         self._slot = 0
 
+        # first person hand
+        self.eq    = 0.0;  self.oeq   = 0.0
+        self.armp  = 0.0;  self.oarmp = 0.0
+        self.army  = 0.0;  self.oarmy = 0.0
+        self.eqit  = None
+
         self.health     = 20
         self.max_health = 20
         self.hunger     = 20
@@ -175,6 +181,7 @@ class Player:
         self.break_time = 0.0
         self.swseq      = (self.swseq + 1) & 3
         self.anim.swingarm()
+        if placing: self.eq = 0.0
 
     def setgmode(self, m):
         self.gmode = m
@@ -292,9 +299,25 @@ class Player:
 
 
     
+    def tickhand(self):
+        self.oeq   = self.eq
+        self.oarmp = self.armp
+        self.oarmy = self.army
+        self.armp += (self.cam.pitch - self.armp) * 0.5
+        self.army += (self.cam.yaw   - self.army) * 0.5
+
+        st  = self.inv.slots[self._slot]
+        it  = st.item if st else None
+        tgt = 1.0 if it is self.eqit else 0.0
+        self.eq += max(-0.4, min(0.4, tgt - self.eq))
+        if self.eq < 0.1: self.eqit = it
+
+
+
     def tick(self):
         ph = self.physics
         self.opos = self.pos.copy()
+        self.tickhand()
 
         if self.sprtrig > 0: self.sprtrig -= 1
         if self.nojumpd > 0: self.nojumpd -= 1

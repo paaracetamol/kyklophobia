@@ -2,6 +2,7 @@
 
 uniform sampler2D texture0;
 uniform vec3 sun_dir;
+uniform vec3 lite;
 
 in vec2 v_uv;
 in vec3 v_normal;
@@ -22,5 +23,5 @@ void main() {
     float diff = max(dot(n, normalize(sun_dir)), 0.0);
     float lit  = 0.4 + diff * 0.6;
 
-    f_color = vec4(tinted * lit, tex.a);
+    f_color = vec4(tinted * lit * lite, tex.a);
 }

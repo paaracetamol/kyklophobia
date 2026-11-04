@@ -28,7 +28,7 @@ class Pose:
     __slots__ = (
         'r_arm', 'l_arm', 'r_leg', 'l_leg',
         'r_arm_y', 'l_arm_y', 'r_arm_z', 'l_arm_z',
-        'body_y', 'byaw', 'headyaw'
+        'body_y', 'byaw', 'headyaw', 'swing'
     )
 
 
@@ -192,6 +192,7 @@ class Biped:
         la_x -= math.sin(age * 0.067) * 0.05
 
         p = Pose()
+        p.swing   = sw
         # r_* = left arm, l_* = right
         p.r_arm   = la_x * RAD2DEG
         p.l_arm   = ra_x * RAD2DEG

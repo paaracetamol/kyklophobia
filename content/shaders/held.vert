@@ -19,6 +19,8 @@ uniform float item_pitch;
 uniform float item_roll;
 uniform vec3 tint;
 uniform int tint_mode;
+uniform mat4 fpmat;
+uniform int fp;
 
 out vec2 v_uv;
 out vec3 v_normal;
@@ -40,6 +42,17 @@ mat3 rz(float a) {
 }
 
 void main() {
+    // first person
+    if (fp == 1) {
+        vec4 vp = fpmat * vec4(in_pos, 1.0);
+        gl_Position = mvp * vp;
+        v_uv       = in_uv;
+        v_normal   = mat3(fpmat) * in_norm;
+        v_frag_pos = vp.xyz;
+        v_tint     = tint_mode == 1 ? (in_norm.y > 0.9 ? tint : vec3(1.0)) : tint;
+        return;
+    }
+
     float ARM_OX     = 0.375;
     float LEG_H      = 0.75;
     float BODY_H     = 0.75;

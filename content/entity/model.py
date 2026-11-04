@@ -101,7 +101,7 @@ class EntityModel:
     def render(
         self, mvp, pos, yaw, 
         mats=None, sun_pos=None,
-        tex=None, hurt=0.0, hide=-1.0
+        tex=None, hurt=0.0, hide=-1.0, lite=(1.0, 1.0, 1.0)
     ):
 
 
@@ -113,6 +113,7 @@ class EntityModel:
         self.prog['ent_yaw'].value  = yaw
         self.prog['hidepart'].value = hide
         self.prog['hurt'].value     = hurt
+        self.prog['lite'].value     = lite
 
         # mat4 column major -> gl
         # numpy -> row major
