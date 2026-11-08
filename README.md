@@ -14,8 +14,9 @@ python3.11 server.py
 ```
 
 ## Showcase / Videos
-Release Showcase: https://www.youtube.com/watch?v=icVM44eRSYU
-Redstone & Minecarts Update: https://www.youtube.com/watch?v=L7ENMlpcSBk
+* Release Showcase: https://www.youtube.com/watch?v=icVM44eRSYU
+* Redstone & Minecarts Update: https://www.youtube.com/watch?v=L7ENMlpcSBk
+
 | | |
 |---|---|
 | <img width="1598" height="898" alt="image" src="https://github.com/user-attachments/assets/bd2d3750-bd5b-4125-910e-9e6774a14e4c" /> | <img width="1601" height="900" alt="image" src="https://github.com/user-attachments/assets/2409f418-ea9b-4f53-bfb4-d800f6211943" /> |
