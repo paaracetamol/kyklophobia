@@ -1,7 +1,7 @@
 from world import blocks
 from items import textures
 from items.registry import REGISTRY, blockuv
-from items.registry import BUILDING, DECORATION, NATURE, TOOLS, COMBAT, FOOD, MATERIALS, MISC
+from items.registry import BUILDING, DECORATION, NATURE, TOOLS, COMBAT, FOOD, MATERIALS, MISC, VARIANTS
 
 
 def regblocks():
@@ -1063,6 +1063,30 @@ def regitems():
         max_stack=64, texture_uv=T.getuv(T.ITEM_FRAME), atlas="items",
         places_block=blocks.ITEM_FRAME_BLOCK
     )
+
+
+    # item -> block place
+    for iid, bid in (
+        (T.DOOR_WOOD,     blocks.OAK_DOOR_BOTTOM),
+        (T.DOOR_IRON,     blocks.IRON_DOOR_BOTTOM),
+        (T.DOOR_SPRUCE,   blocks.SPRUCE_DOOR_BOTTOM),
+        (T.DOOR_BIRCH,    blocks.BIRCH_DOOR_BOTTOM),
+        (T.DOOR_JUNGLE,   blocks.JUNGLE_DOOR_BOTTOM),
+        (T.DOOR_ACACIA,   blocks.ACACIA_DOOR_BOTTOM),
+        (T.DOOR_DARK_OAK, blocks.DARK_OAK_DOOR_BOTTOM),
+        (T.SIGN,          blocks.SIGN_STANDING),
+        (T.BED,           blocks.BED_FOOT),
+        (T.SUGAR_CANE,    blocks.SUGAR_CANE),
+    ):
+        R.get(iid).places_block = bid
+
+    pb = {i.places_block for i in R.getall()}
+    for i in R.getall():
+        if i.itemId not in pb and not i.nm.endswith("(Block)"): continue
+        if not i.nm.endswith("(Block)"): i.nm += " (Block)"
+        R._by_category[i.category].remove(i)
+        i.category = VARIANTS
+        R._by_category.setdefault(VARIANTS, []).append(i)
 
 
 regblocks()

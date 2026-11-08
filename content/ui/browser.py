@@ -40,6 +40,7 @@ class ItemBrowser:
 
     def refresh(self):
         self.fitems = REGISTRY.search(self.query) if self.query else REGISTRY.getall()
+        self.fitems.sort(key=lambda i: i.category == "variants")
         ms = self.maxscroll()
         if self.scroll > ms: self.scroll = max(0, ms)
 

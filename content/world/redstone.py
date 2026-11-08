@@ -199,10 +199,10 @@ def pickitem(v):
     if b == TRIPWIRE: return _IT.STRING
     if b == PISTON_HEAD: return STICKY_PISTON if (int(v) >> 10) & 8 else PISTON
     if b in DOORTOPS: b = DOORTOPS[b]
-    if REGISTRY.exists(b): return b
-    # placed by an item, hopper, cauldron
+    # placed by an item, hopper, cauldron, doors, sign -> item, NOT (Block)
     for i in REGISTRY._items.values():
-        if i.places_block == b: return i.itemId
+        if i.places_block == b and i.category != "variants": 
+            return i.itemId
     return b
 
 

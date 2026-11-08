@@ -124,7 +124,7 @@ class HeldItemRenderer:
         
         
 
-        if idef.is_block:
+        if idef.is_block and not self.iem.flat(itemId):
             prog['scale'].value = self.B_SCALE
             prog['item_yaw'].value   = math.radians(-45.0)  # ~45° tilt
             prog['item_pitch'].value = 0.0
@@ -145,7 +145,7 @@ class HeldItemRenderer:
             vao = self.spritevao(itemId)
             
             if vao:
-                self.iem.text_item.use(0)
+                self.iem.spritetex(itemId).use(0)
                 prog['texture0'].value = 0
                 vao.render(moderngl.TRIANGLES)
                 
@@ -193,7 +193,7 @@ class HeldItemRenderer:
         
         
 
-        if idef.is_block:
+        if idef.is_block and not self.iem.flat(itemId):
             prog['scale'].value      = self.B_SCALE
             prog['item_yaw'].value   = math.radians(-45.0)
             prog['item_pitch'].value = 0.0
@@ -214,7 +214,7 @@ class HeldItemRenderer:
             vao = self.spritevao(itemId)
             
             if vao:
-                self.iem.text_item.use(0)
+                self.iem.spritetex(itemId).use(0)
                 prog['texture0'].value = 0
                 vao.render(moderngl.TRIANGLES)
 
@@ -300,7 +300,7 @@ class HeldItemRenderer:
         prog   = self.prog
         tint   = self.iem.TINT_MAP.get(itemId, (1.0, 1.0, 1.0))
         tmode  = self.iem.TINT_MODE_MAP.get(itemId, self.iem.TINT_MODE_ALL)
-        m      = root @ self.fpitem(sw, eq) @ (_BLOCKFP if idef.is_block else _ITEMFP)
+        m      = root @ self.fpitem(sw, eq) @ (_BLOCKFP if idef.is_block and not self.iem.flat(itemId) else _ITEMFP)
 
         prog['fp'].value = 1
         prog['fpmat'].write(np.ascontiguousarray(m.T, dtype='f4').tobytes())
@@ -311,14 +311,14 @@ class HeldItemRenderer:
         prog['tint_mode'].value = tmode
         prog['texture0'].value  = 0
 
-        if idef.is_block:
+        if idef.is_block and not self.iem.flat(itemId):
             self.iem.texture.use(0)
             self.cuvbuf.write(self.iem.blockuvs(itemId).tobytes())
             self.cvao.render(moderngl.TRIANGLES)
         else:
             vao = self.spritevao(itemId)
             if vao:
-                self.iem.text_item.use(0)
+                self.iem.spritetex(itemId).use(0)
                 vao.render(moderngl.TRIANGLES)
 
         self.ctx.disable(moderngl.BLEND)

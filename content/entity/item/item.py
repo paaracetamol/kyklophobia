@@ -94,6 +94,7 @@ class ItemEntityManager:
         
 
         self.items_img = pygame.image.load(_respath.atlas_items()).convert_alpha()
+        self.blocks_img = None
 
         imgf = pygame.transform.flip(self.items_img, False, True)
         self.text_item = ctx.texture(imgf.get_size(), 4, pygame.image.tostring(imgf, "RGBA"))
@@ -161,10 +162,16 @@ class ItemEntityManager:
         if not idef:
             return None
 
+        img = self.items_img
+        if idef.atlas == 'blocks':
+            if self.blocks_img is None: 
+                self.blocks_img = pygame.image.load(_respath.atlas_block()).convert_alpha()
+            img = self.blocks_img
+
         col, row = idef.texture_uv
         px, py   = col * 16, row * 16
-        atc      = self.items_img.get_width()  // 16
-        atr      = self.items_img.get_height() // 16
+        atc      = img.get_width()  // 16
+        atr      = img.get_height() // 16
 
         eps = 0.0001
         u0  = col / atc + eps;             u1 = (col + 1) / atc - eps
@@ -194,7 +201,7 @@ class ItemEntityManager:
         def is_opaque(tx, ty):
             if tx < 0 or tx >= 16 or ty < 0 or ty >= 16:
                 return False
-            c = self.items_img.get_at((px + tx, py + ty))
+            c = img.get_at((px + tx, py + ty))
             return c[3] > 128
             
             
@@ -246,6 +253,18 @@ class ItemEntityManager:
         }
         
         
+
+    # custom geom blocks hold/drop -> flat icon
+    def flat(self, iid, fc={}):
+        if iid not in fc:
+            from world.isorender import render3d_ok
+            idef = REGISTRY.get(iid)
+            fc[iid] = bool(idef and idef.is_block and not render3d_ok(iid))
+        return fc[iid]
+
+    def spritetex(self, iid):
+        return self.texture if self.flat(iid) else self.text_item
+
 
     def spritevao(self, iid):
         if iid not in self.sprcache:
@@ -474,7 +493,7 @@ class ItemEntityManager:
 
             bob  = (math.sin(i.bob_phase + i.age * DROP_BOBSPEED) + 1.0) * DROP_BOBHEIGHT + 0.2
             idef = REGISTRY.get(i.itemId)
-            isb  = idef and idef.is_block
+            isb  = idef and idef.is_block and not self.flat(i.itemId)
 
             if isb:
                 self.prog['scale'].value = bsc
@@ -519,10 +538,11 @@ class ItemEntityManager:
                     
                     
 
-                if ctex != 'item':
-                    self.text_item.use(0)
+                st = self.spritetex(i.itemId)
+                if ctex is not st:
+                    st.use(0)
                     self.prog['texture0'].value = 0
-                    ctex = 'item'
+                    ctex = st
                     
                     
 

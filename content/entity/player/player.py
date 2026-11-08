@@ -5,6 +5,7 @@ import math
 
 from engine.camera import Camera
 from engine.physics import PhysicsEngine
+from world.selbox import selbox, rayhit
 from entity.biped import Biped
 from config import (
     BREAK_T, RAYCAST_DIST, HURT_T, KNOCK_T,
@@ -821,7 +822,18 @@ class Player:
             p     = start + direction * dist
             block = (int(math.floor(p[0])), int(math.floor(p[1])), int(math.floor(p[2])))
 
-            if self.physics.isblocksolid(block[0], block[1], block[2]):
+            bx = None
+            if block != lb and self.physics.isblocksolid(block[0], block[1], block[2]):
+                bx = selbox(self.world.chunker.rs.raw(*block))
+
+            if bx:
+                h = rayhit(start - block, direction, bx)
+                if h and h[0] <= max_dist:
+                    face = [0, 0, 0]
+                    face[h[1]] = -1 if direction[h[1]] > 0 else 1
+                    return block, tuple(face)
+
+            elif block != lb and self.physics.isblocksolid(block[0], block[1], block[2]):
                 face = None
 
                 if lb is not None and lb != block:

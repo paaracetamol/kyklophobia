@@ -54,6 +54,7 @@ COMBAT     = "combat"
 FOOD       = "food"
 MATERIALS  = "materials"
 MISC       = "misc"
+VARIANTS   = "variants" # block counterparts
 
 
 class ItemRegistry:

@@ -65,7 +65,7 @@ from world.blocks import (
     DAYLIGHT_DETECTOR_INVERTED, TRIPWIRE_HOOK, TRIPWIRE
 )
 from world.container import SIZES
-from world.redstone import ALLRAILS, railshape
+from world.redstone import ALLRAILS, railshape, pickitem
 from entity.core import KIND_CART, KIND_CHESTCART, KIND_FURNACECART, KIND_HOPPERCART
 from entity.minecart import CARTITEMS, CARTKINDS
 from ui.container import ContScreen
@@ -82,6 +82,7 @@ from commands.manager import CommandManager
 from items import textures as text_items
 from world.animation import getanims
 from world.renderers.extruded import ExtrudedRenderer
+from world.selbox import selbox
 from engine.gamma import Gamma
 from entity.blockenty import BlockEntityManager, itemblock
 from entity.core import KIND_TNT, KIND_ITEM, KIND_DUMMY
@@ -246,6 +247,7 @@ class VoxelWorld:
             ], dtype='f4'
         )
         
+        self.wunit   = wverts.reshape(-1, 3)
         self.wirevbo = self.ctx.buffer(wverts.tobytes())
         self.wirevao = self.ctx.vertex_array(
             self.wireprog, [(self.wirevbo, '3f', 'in_pos')]
@@ -1068,7 +1070,7 @@ class VoxelWorld:
         if self.netclient and self.netclient.isconn():
             self.netclient.sendchange(bx, by, bz, 0)
 
-        if not self.p.gmode: self.dropblock(bx, by, bz, bt)
+        if not self.p.gmode: self.dropblock(bx, by, bz, pickitem(bt))
 
 
     
@@ -1253,7 +1255,8 @@ class VoxelWorld:
                 self.p.onmouse()
             else:
                 self.p.clearinput()
-                
+                pygame.mouse.get_rel()  # FIX gui mouse jump
+
                 
                 
 
@@ -1425,6 +1428,11 @@ class VoxelWorld:
                 self.wireprog['mvp'].write(mvpb)
                 self.wireprog['wcolor'].value = (0.0, 0.0, 0.0, 0.4)
                 self.wireprog['offset'].value = targetb
+
+                bx = selbox(self.chunker.rs.raw(*targetb)) or (0, 0, 0, 1, 1, 1)
+                lo, hi = np.array(bx[:3], 'f4') - 0.002, np.array(bx[3:], 'f4') + 0.002
+                self.wirevbo.write((lo + self.wunit * (hi - lo)).astype('f4').tobytes())
+                
                 self.wirevao.render(moderngl.LINES)
 
                 """
