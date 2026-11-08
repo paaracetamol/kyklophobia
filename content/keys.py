@@ -4,6 +4,9 @@ import time
 from pygame.locals import *
 from config import SCL_HUD, WIN_W, WIN_H
 from entity.blockenty import itemblock
+from world.redstone import pickitem
+from entity.minecart import CARTITEMS
+from world.blocks import CHEST, TRAPPED_CHEST
 from items.registry import REGISTRY, ItemStack
 
 SCRL_UP = 4
@@ -92,6 +95,7 @@ def onEvent(w, events):
 
             if i.key == K_ESCAPE:
                 if w.oninv:
+                    w.closecont()
                     w.oninv = False
                     w.ui.invbrwser._onsearch = False
                     w.ui.invbrwser.query = ""
@@ -161,6 +165,7 @@ def onEvent(w, events):
             elif i.key == K_e:
                 if w.oninv and w.ui.invbrwser._onsearch: continue
                 w.oninv = not w.oninv
+                if not w.oninv: w.closecont()
                 if w.oninv:
                     w.p.vel[0] = 0.0
                     w.p.vel[2] = 0.0
@@ -243,7 +248,31 @@ def onEvent(w, events):
                             
 
         elif i.type == MOUSEBUTTONDOWN:
-            if w.oninv:
+            if w.oninv and w.cont:
+                mx, my  = pygame.mouse.get_pos()
+                ix, iy, scale = w.ui.contpos(w.cont)
+                shift = pygame.key.get_mods() & KMOD_SHIFT
+                w.synccont()
+
+                if not w.cont.click(
+                    (mx - ix) / scale, 
+                    (my - iy) / scale, 
+                    i.button, shift
+                ) and w.p.inv._held:
+
+                    held = w.p.inv._held
+                    w.p.inv._held = None
+
+                    pos = w.p.eyepos() + w.p.cam.front * 0.5
+
+                    if w.isnet():
+                        vel = w.p.cam.front * 3.0
+                        vel[1] += 2.0
+                        w.netclient.senddrop(held.item.itemId, held.count, pos, vel)
+
+                    else: w.itementys.spawn(held.item.itemId, held.count, pos, w.p.cam.front.copy())
+
+            elif w.oninv:
                 mx, my  = pygame.mouse.get_pos()
                 scale   = SCL_HUD
                 ww, wh  = 176 * scale, 166 * scale
@@ -297,17 +326,39 @@ def onEvent(w, events):
 
                 elif i.button == 3:
                     tb, face = w.p.targetblock(5.0)
-                    
-                    if tb:
+
+                    from world.redstone import DOORS
+                    if w.clickcart():
+                        w.p.swing()
+
+                    elif (
+                        tb and w.getstack() and 
+                        w.getstack().item.itemId in CARTITEMS and 
+                        w.placecart(*tb, w.getstack().item.itemId)
+                    ):
+                        w.p.swing(placing=True)
+
+                    elif tb and not w.p.crouching and w.useblock(*tb):
+                        w.p.swing()
+
+                    elif tb:
                         pp = w.p.placepos(tb, face)
                         if pp:
                             px, py, pz = pp
                             bt = w.p.getsel()
                             
-                            if bt is not None:
+                            if bt is not None and w.chunker.rs.canplace(px, py, pz, bt, w.bakefacing(bt, face, (px, py, pz), tb)):
                                 w.p.swing(placing=True)
-                                _facig = w.bakefacing(bt, face)
+                                _facig = w.bakefacing(bt, face, (px, py, pz), tb)
                                 w.chunker.placeblock(px, py, pz, bt=bt, facing=_facig)
+
+                                if bt in (CHEST, TRAPPED_CHEST): w.chestalign(px, py, pz, bt, _facig)
+
+                                # door tophalf
+                                _dt = DOORS.get(bt)
+                                
+                                if _dt: 
+                                    w.chunker.placeblock(px, py + 1, pz, bt=_dt, facing=_facig)
 
                                 from world.blocks import REDSTONE_WIRE
                                 
@@ -344,7 +395,7 @@ def onEvent(w, events):
 
                     if tb:
                         bx, by, bz = tb
-                        bt = w.chunker.getblock(bx, by, bz)
+                        bt = pickitem(w.chunker.rs.raw(bx, by, bz))
 
                         if bt and REGISTRY.exists(bt):
                             idef = REGISTRY.get(bt)

@@ -2,7 +2,7 @@ import numpy as np
 import threading
 import time
 import moderngl
-from config import CHUNK_SZ, CHUNK_H, SEA_LEVEL
+from config import CHUNK_SZ, CHUNK_H, SEA_LEVEL, FLAT_LAYERS
 from world.trees import treetochunk, grasstochunk, cactitochunk
 from world.decor import addchunkrocks
 from world.blocks import (
@@ -16,7 +16,7 @@ from world.renderers.registry import (
     BLOCK_UVS, BLOCK_TEX,
     CONNECT_TYPE, CONNECT_FAMILY,
     BLOCK_ARM_NUM, BLOCK_ARM_ELEM, BLOCK_ARM_FUVS, BLOCK_ARM_FTEX,
-    STATE_ELEM_OFF, STATE_ELEM_NUM,
+    STATE_ELEM_OFF, STATE_ELEM_NUM, STATE_ROW,
 )
 from world.generate import _generate
 from world.mesh import (
@@ -100,55 +100,65 @@ class Chunk:
         off_x = np.clip(float(self.offset_x), -1e6, 1e6)
         off_z = np.clip(float(self.offset_z), -1e6, 1e6)
         biomes = np.zeros((CHUNK_SZ, CHUNK_SZ), dtype=np.int8)
-        _generate(self.voxels, off_x, off_z, self.world.noise.p, biomes)
 
-        if hasattr(self.world, 'trees') and self.world.trees:
-            treetochunk(
-                self.voxels, self.offset_x, self.offset_z, 
-                self.world.trees, self.world.seed, 
-                self.world.noise.p, self.world.chunker, 
-                CHUNK_SZ, CHUNK_H, SEA_LEVEL, 
-                biomes
-            )
-            
+        if self.world.wtype == "flat":
+            y = 0
+            for i, j in FLAT_LAYERS:
+                self.voxels[:, y:y + i, :] = j
+                y += i
 
-        key = (self.x, self.z)
-        if key in self.world.chunker.pending_decorations:
-            for lx, ly, lz, bt in self.world.chunker.pending_decorations[key]:
+        else:
+            _generate(self.voxels, off_x, off_z, self.world.noise.p, biomes)
 
-                if 0 <= lx < CHUNK_SZ and 0 <= ly < CHUNK_H and 0 <= lz < CHUNK_SZ:
-                    if bt in [7, 8, 9] and self.voxels[lx, ly, lz] in [0, 1]:
-                        self.voxels[lx, ly, lz] = bt
+            if hasattr(self.world, 'trees') and self.world.trees:
+                treetochunk(
+                    self.voxels, self.offset_x, self.offset_z,
+                    self.world.trees, self.world.seed,
+                    self.world.noise.p, self.world.chunker,
+                    CHUNK_SZ, CHUNK_H, SEA_LEVEL,
+                    biomes
+                )
 
 
-            del self.world.chunker.pending_decorations[key]
+            key = (self.x, self.z)
+            if key in self.world.chunker.pending_decorations:
+                for lx, ly, lz, bt in self.world.chunker.pending_decorations[key]:
 
-        if hasattr(self.world, 'rocks') and self.world.rocks:
-            addchunkrocks(
-                self.voxels, self.offset_x, self.offset_z, 
-                self.world.rocks, self.world.seed, 
-                self.world.noise.p, self.world.chunker, 
-                CHUNK_SZ, CHUNK_H, SEA_LEVEL
-            )
+                    if 0 <= lx < CHUNK_SZ and 0 <= ly < CHUNK_H and 0 <= lz < CHUNK_SZ:
+                        if bt in [7, 8, 9] and self.voxels[lx, ly, lz] in [0, 1]:
+                            self.voxels[lx, ly, lz] = bt
 
-        if hasattr(self.world, 'trees'):
-            grasstochunk(
-                self.voxels, self.offset_x, self.offset_z, 
-                self.world.seed, self.world.noise.p, biomes, 
-                CHUNK_SZ, CHUNK_H, SEA_LEVEL
-            )
-            
-            cactitochunk(
-                self.voxels, self.offset_x, self.offset_z, 
-                biomes, self.world.seed, 
-                CHUNK_SZ, CHUNK_H, SEA_LEVEL
-            )
-            
-            
-            
-            
-        
+
+                del self.world.chunker.pending_decorations[key]
+
+            if hasattr(self.world, 'rocks') and self.world.rocks:
+                addchunkrocks(
+                    self.voxels, self.offset_x, self.offset_z,
+                    self.world.rocks, self.world.seed,
+                    self.world.noise.p, self.world.chunker,
+                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
+                )
+
+            if hasattr(self.world, 'trees'):
+                grasstochunk(
+                    self.voxels, self.offset_x, self.offset_z,
+                    self.world.seed, self.world.noise.p, biomes,
+                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
+                )
+
+                cactitochunk(
+                    self.voxels, self.offset_x, self.offset_z,
+                    biomes, self.world.seed,
+                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
+                )
+
+
+
+
+
         self.world.chunker.applymods(self)
+        self.world.chunker.rs.tiles.loadck(self.x, self.z)
+        self.world.chunker.rs.chunkready(self)
         self.gen_ready = True
         self.light_dirty = True
 
@@ -272,7 +282,7 @@ class Chunk:
             MESH_GRASS_V, _FACINGTYPE, HOR_UV_REMAP, AXIS_UV_REMAP, AXIS_UV_ROT, 
             BLOCK_UVS, BLOCK_TEX, CONNECT_TYPE, CONNECT_FAMILY, 
             BLOCK_ARM_NUM, BLOCK_ARM_ELEM, BLOCK_ARM_FUVS, BLOCK_ARM_FTEX, 
-            STATE_ELEM_OFF, STATE_ELEM_NUM
+            STATE_ELEM_OFF, STATE_ELEM_NUM, STATE_ROW
         )
         
         return vertices, tverts

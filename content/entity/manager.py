@@ -1,13 +1,17 @@
 import math
 import numpy as np
 import moderngl
+import pygame
 
 import _respath
 from skin import skintex
 from config import HURT_T
 from entity import motion
+from entity.blockenty import tnt
+from entity.model import EntityModel
 from entity.ai import nav
-from entity.core import REND_MODEL, mkentity
+from entity.core import REND_MODEL, REND_CART, mkentity
+from entity.cartmodel import cartmesh, cartmats
 from entity.store import entck, saveents, loadents
 import entity.kinds  # noqa: F401
 
@@ -26,6 +30,7 @@ class EntityManager:
         self.ents   = {}
         self.texs   = {}
         self.neid   = -1
+        self.cartm  = None
 
 
         self.wdir    = None
@@ -100,6 +105,37 @@ class EntityManager:
         t.hurt(dmg)
         if src is not None: t.knock(motion.knockvec(src.pos, t.pos))
 
+    
+
+    def cartbodies(self): return list(self.ents.values())
+
+    def cartinput(self, r):
+        if r is self.world.p: return r.ya, r.cam.yaw
+        return 0.0, 0.0
+
+    def cartplayerbox(self, p):
+        hw = p.physics.pw / 2
+        return (
+            p.pos[0] - hw, p.pos[1], 
+            p.pos[2] - hw, p.pos[0] + hw, 
+            p.pos[1] + p.physics.ph, 
+            p.pos[2] + hw
+        )
+
+
+
+    def cartboom(self, x, y, z, power, rails):
+        tnt.explodeat(self.world.worldctx(), x, y, z, power, rails)
+
+
+    def cartlit(self, c): pass
+
+    def cartkick(self, r, c):
+        if r is self.world.p: r.getoff()
+        else: r.riding = None
+
+
+
     # singleplayer, nobody to tell
     def entanim(self, e, anim):
         e.playanim(anim)
@@ -149,7 +185,7 @@ class EntityManager:
         #spd = math.sqrt(float(e.vel[0]) ** 2 + float(e.vel[2]) ** 2)
         ra = la = rl = ll = 0.0
 
-        if e.mspd > 0.35:
+        if e.mspd > 0.35 and e.riding is None:
             wc = e.age * 4.0
             ra = math.sin(wc) * 50.0
             la = -ra
@@ -172,7 +208,7 @@ class EntityManager:
 
         return self.pmodel.posemats(
             pitch=e.pitch, r_arm=ra, l_arm=la, r_leg=rl, l_leg=ll,
-            headyawoff=hoff,
+            headyawoff=hoff, sit=e.riding is not None,
         )
 
 
@@ -184,6 +220,24 @@ class EntityManager:
 
         for i in self.ents.values():
             t = i.type
+
+            if t.rend == REND_CART:
+                if self.cartm is None:
+                    # 64x32
+
+                    im = pygame.transform.flip(pygame.image.load(_respath.text_entity("minecart")).convert_alpha(), False, True)
+                    tx = self.ctx.texture(im.get_size(), 4, pygame.image.tostring(im, "RGBA"))
+                    tx.filter = (moderngl.NEAREST, moderngl.NEAREST)
+                    self.cartm = EntityModel(self.ctx, *cartmesh(), tex=tx)
+
+
+                p, m = cartmats(i, self.world.chunker)
+                self.cartm.render(
+                    mvp, p, 90.0, m, sun_pos=sun_pos, hurt=max(0.0, i.hurtt / HURT_T)
+                )
+                continue
+
+                
             if t.rend != REND_MODEL: continue
 
             self.pmodel.model.render(

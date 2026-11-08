@@ -440,7 +440,7 @@ class ItemEntityManager:
 
         for y in range(sy, sy - 10, -1):
             if y < 0 or y >= 128: continue
-            if self.world.chunker.issolid(cx, y, cz):
+            if self.world.chunker.iscollide(cx, y, cz):
                 return y + 1.0
         return -1000.0
         

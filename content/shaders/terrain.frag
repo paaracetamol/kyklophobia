@@ -107,12 +107,24 @@ void main() {
 
     
 
-    if (v_uv.x >= 4.0*uv_w && v_uv.x < 7.0*uv_w && v_uv.y < uv_h)
+    
+    float shd = v_lit.z;
+    if (shd < 0.0) {
+        tc.rgb = mix(tc.rgb, vec3(1.0), -shd);
+        shd = 1.0;
+    }
+    if (shd > 1.5) {
+        float f = clamp((shd - 2.0) / 15.0, 0.0, 1.0);
+        float r = shd < 2.5 ? 0.3 : f * 0.6 + 0.4;
+        tc.rgb *= vec3(r, max(f * f * 0.7 - 0.5, 0.0), max(f * f * 0.6 - 0.7, 0.0));
+        shd = 1.0;
+    }
+    else if (v_uv.x >= 4.0*uv_w && v_uv.x < 7.0*uv_w && v_uv.y < uv_h)
         tc.rgb *= vec3(1.0, 0.2, 0.2);
 
     
     
-    vec3 col = tc.rgb * lmap(v_lit.xy) * v_lit.z;
+    vec3 col = tc.rgb * lmap(v_lit.xy) * shd;
 
     // linear fog -> sky clr mix
     vec3  sky  = fog_col;

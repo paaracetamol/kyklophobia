@@ -1,4 +1,5 @@
 import math
+import numpy as np
 
 from config import CHUNK_SZ, ENT_EPS, ENT_STILLV, KNOCK_H, KNOCK_V
 
@@ -16,21 +17,7 @@ def loaded(ck, x, z):
 
 
 def boxfree(ck, x, y, z, hw, h, m=ENT_EPS):
-    is_solid = ck.issolid   # cache for loop
-    sx = int(flr(x - hw - m)); ex = int(cl(x + hw + m))
-    sy = int(flr(y - m));      ey = int(cl(y + h  + m))
-    sz = int(flr(z - hw - m)); ez = int(cl(z + hw + m))
-    
-
-    for bx in range(sx, ex):
-        for by in range(sy, ey):
-            for bz in range(sz, ez):
-                if is_solid(bx, by, bz):
-                    if (x - hw < bx + 1 and x + hw > bx and
-                        y      < by + 1 and y + h  > by and
-                        z - hw < bz + 1 and z + hw > bz):
-                        return False
-    return True
+    return not ck.blocked(x - hw, y, z - hw, x + hw, y + h, z + hw)
 
 
 
@@ -189,12 +176,40 @@ def movebox(ck, pos, vel, hw, h, step, dt):
 
 
 
+# piston
+def shove(e, ck, dx, dy, dz):
+    t = e.type
+    fp, *_ = movebox(
+        ck, e.pos, np.array((dx, dy, dz), dtype='f4'), 
+        t.hw, t.h, 0.0, 1.0
+    )
+    e.pos = fp
+
+
+
+
+
 def tickmotion(e, ck, dt):
     t = e.type
+    if e.ownmove: return
+
+    
+    if e.riding is not None:
+        if not e.riding.alive or e.riding.rider is not e:
+            e.riding = None
+
+        else:
+            e.pos[:] = e.riding.pos
+            e.pos[1] += -0.35
+            e.vel[:] = 0.0
+            return
+
+            
 
     if not loaded(ck, e.pos[0], e.pos[2]):
         e.frozen = True
         return
+        
     e.frozen = False
 
     if e.grounded and not boxfree(ck, e.pos[0], e.pos[1] - ENT_EPS, e.pos[2], t.hw, t.h):

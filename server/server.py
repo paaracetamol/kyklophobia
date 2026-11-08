@@ -27,6 +27,7 @@ def argparser():
     p.add_argument("--port",        type=int, default=SV_PORT)
     p.add_argument("--world",                 default="default")
     p.add_argument("--seed",        type=int, default=SEED)
+    p.add_argument("--type",        default="default", choices=("default", "flat"), dest="wtype")
     p.add_argument("--max-players", type=int, default=SV_MAXONLINE, dest="maxp")
     p.add_argument("--motd",                  default=SV_MOTD)
     return p.parse_args()
@@ -49,6 +50,7 @@ def banner(args):
     print(f"  Port:        {args.port}")
     print(f"  World:       {args.world}")
     print(f"  Seed:        {args.seed}")
+    print(f"  Type:        {args.wtype}")
     print(f"  Max Online:  {args.maxp}")
     print(f"  Directory:   saves/{args.world}/")
     print("\n")
@@ -109,7 +111,7 @@ def console(server):
             up = time.time() - server.start_time
             h, m, s = int(up // 3600), int(up % 3600 // 60), int(up % 60)
             print(f"  Players: {n}/{server.maxpl}")
-            print(f"  World:   {server.wname} (seed: {server.seed})")
+            print(f"  World:   {server.wname} (seed: {server.seed}, type: {server.wtype})")
             print(f"  Uptime:  {h:02d}:{m:02d}:{s:02d}")
             
             
@@ -139,12 +141,13 @@ def main():
     _setup_path()
 
     args = argparser()
-    banner(args)
 
     import config
     config.root = os.path.join(SDIR, "saves")
     sdir = os.path.join(config.root, args.world)
     os.makedirs(sdir, exist_ok=True)
+    args.seed, args.wtype = config.worldmeta(args.world, args.seed, args.wtype)
+    banner(args)
 
     cdir = os.path.join(sdir, "cache")
     os.makedirs(cdir, exist_ok=True)

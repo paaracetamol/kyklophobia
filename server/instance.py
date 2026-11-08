@@ -10,10 +10,24 @@ import numpy as np
 from collections import deque
 from world.terrain import ChunkManager, PerlinNoise
 import config
+from config import P_W, P_H
 from config import (
     CHUNK_SZ, CHUNK_H, SV_PORT, SV_HOST, SEED,
     SV_RATE, SV_TIMEOUT, SV_MAXONLINE, SV_MOTD, RENDER_DIST, ENT_REACH, SV_PVP,
 )
+from config import TICK
+from entity import blast
+from world.redstone import pickitem
+from network.protocol import mkpiston, mkcontdata, mksun, mknote, mkcartkick, mkcartlit, mkcartboom
+from world.redstone import ALLRAILS, railshape
+from entity.core import KIND_CART, KIND_FURNACECART
+from entity.minecart import CARTKINDS
+from world.redstone import POPITEM, DOORS, DOORTOPS
+from world.blocks import WATER, WATER_FLOWING, LAVA, LAVA_FLOWING, NOTEBLOCK
+import random
+from items.registry import REGISTRY
+import items.defs
+import struct
 from network.protocol import (
     MessageType, ReadMessage,
     mkservmsg, mkpos, mkitemcollect, mkdisconnect, mksvreply, mkleft, mkseed, mkpjoin,
@@ -97,13 +111,13 @@ class PlayerState:
 class Instance:
     def __init__(
         self, host=SV_HOST, port=SV_PORT, wname="default",
-        seed=SEED, maxp=SV_MAXONLINE, motd=SV_MOTD
+        seed=SEED, maxp=SV_MAXONLINE, motd=SV_MOTD, wtype=None
     ):
-        
+
         self.host    = host
         self.port    = port
         self.wname   = wname
-        self.seed    = seed
+        self.seed, self.wtype = config.worldmeta(wname, seed, wtype)
         self.maxpl   = maxp
         self.motd    = motd
         self.sock    = None
@@ -117,7 +131,7 @@ class Instance:
         self.neid    = 1
         self.commands = None
         self.ents    = {}   # eid -> Entity
-        self.entlock = threading.Lock()
+        self.entlock = threading.RLock()   # carts reach back for items and players mid tick
         self.entloaded = set()   # chunks with .ent in mem
         self._eid    = 0
         self.eidlock = threading.Lock()
@@ -141,11 +155,24 @@ class Instance:
                 
 
         self.world     = _World(self.seed)
+        self.world.wtype = self.wtype
         self.chunker = ChunkManager(
             self.world, render_dist=self.SIM_DIST,
             wname=self.wname, is_server=True, headless=True,
         )
         self.world.chunker = self.chunker
+        self.chunker.rs.onflush = self.rsflush
+        self.chunker.rs.ontnt   = self.ignitetnt
+        self.chunker.rs.bodies  = self.rsbodies
+        self.chunker.rs.movers  = self.rsmovers
+        self.chunker.rs.spawn   = lambda iid, cnt, pos, vel: self.itemdrop(iid, cnt, pos, vel)
+        self.chunker.rs.itemsin = self.rsitemsin
+        self.sunang = 60.0
+        self.chunker.rs.sunangle = lambda: self.sunang
+        self.chunker.rs.onnote   = lambda x, y, z, n: self.broadcast(mknote(x, y, z, n))
+        self.chunker.rs.ondrop  = self.rsdrop
+        self.chunker.rs.tiles.onchg = self.contsend
+        self.chunker.rs.onmove  = lambda *a: self.broadcast(mkpiston(*a))
         
         self.chunker.ui = None
         
@@ -186,8 +213,17 @@ class Instance:
             
 
         class _WorldWrap:
+            @property
+            def sun_angle(s): return srv.sunang
+
+            @sun_angle.setter
+            def sun_angle(s, a):
+                srv.sunang = a
+                srv.broadcast(mksun(a))
+
+
             def __init__(s):
-                s.sun_angle = 0.0
+                #s.sun_angle = 0.0
                 s.netclient = None
                 s.netserver = srv
                 s.ui        = type('UI', (), {'add_chat_message': _broadcast_reply})()
@@ -322,6 +358,115 @@ class Instance:
         
         
         
+    #carts
+    
+    def cartbodies(self): return list(self.ents.values())
+
+    def cartinput(self, r):
+        return (getattr(r, 'cartfw', 0.0), getattr(r, 'cartyaw', 0.0))
+
+    def cartplayerbox(self, p):
+        return (p.pos[0] - P_W / 2, p.pos[1], p.pos[2] - P_W / 2, p.pos[0] + P_W / 2, p.pos[1] + P_H, p.pos[2] + P_W / 2)
+
+    def cartkick(self, r, c):
+        if getattr(r, 'ride', None) is c:
+            r.ride = None
+            self.send(r, mkcartkick())
+        else:
+            r.riding = None
+
+
+    
+    
+    def cartboom(self, x, y, z, power, rails):
+        self.explodetnt(x, y, z, power, rails)
+        self.broadcast(mkcartboom(x, y, z, power, rails))
+
+
+
+    def cartlit(self, c): self.broadcast(mkcartlit(c.eid, c.fuse))
+
+
+    def cartuse(self, p, eid, coal):
+        with self.entlock:
+            e = self.ents.get(eid)
+            if e is None or e.kind != KIND_FURNACECART or np.linalg.norm(e.pos - p.pos) > ENT_REACH: return
+
+            e.use(float(p.pos[0]), float(p.pos[2]), bool(coal))
+
+
+
+    def cartplace(self, p, x, y, z, kd=KIND_CART):
+        v = self.chunker.rs.raw(x, y, z)
+        if v & 0x3FF not in ALLRAILS or not self.inreach(p, x, y, z) or kd not in CARTKINDS: return 0
+        off = 0.5 if railshape(v) in (2, 3, 4, 5) else 0.0
+
+        return self.spawnat(kd, (x + 0.5, y + 0.0625 + off, z + 0.5))
+
+
+    # 0 = out
+    def cartride(self, p, eid):
+
+        with self.entlock:
+            old = getattr(p, 'ride', None)
+            if old is not None and old.rider is p: old.rider = None
+            p.ride = None
+
+            if not eid: return
+            
+            e = self.ents.get(eid)
+            if e is None or e.kind != KIND_CART or np.linalg.norm(e.pos - p.pos) > ENT_REACH: return
+            if e.rider is None:
+                e.rider = p
+                p.ride  = e
+
+            else:
+                self.send(p, mkcartkick())
+
+
+
+    #tune
+    def notehand(self, p, x, y, z, bt):
+        cur = self.chunker.rs.raw(x, y, z)
+        if (
+            bt & 0x3FF == NOTEBLOCK and 
+            cur & 0x3FF == NOTEBLOCK and 
+            cur & 0x7FFF != bt & 0x7FFF
+        ):
+            self.broadcast(mknote(x, y, z, (bt >> 10) & 0x1F), exclude_pid=p.pid)
+
+
+    # place door
+    def doorplace(self, x, y, z, bt):
+        b  = bt & 0x3FF
+        rs = self.chunker.rs
+        cur = rs.raw(x, y, z) & 0x3FF
+
+        if b in DOORTOPS and cur != b: return True # handled
+        if b not in DOORS or cur == b: return None # not door
+
+        if rs.raw(x, y + 1, z) & 0x3FF not in (0, WATER, WATER_FLOWING, LAVA, LAVA_FLOWING): 
+            return False # refused
+
+
+        tp = (bt & ~0x3FF) | DOORS[b]
+        with rs.lock:
+            self.chunker.setblock(x, y, z, bt)
+            self.chunker.setblock(x, y + 1, z, tp)
+
+        self.queueblk(x, y, z, bt)
+        self.queueblk(x, y + 1, z, tp)
+
+        return True
+
+
+    def inreach(self, p, x, y, z):
+        return max(
+            abs(x + 0.5 - p.pos[0]), 
+            abs(y + 0.5 - p.pos[1]), 
+            abs(z + 0.5 - p.pos[2])
+        ) <= self.MAX_REACH
+
 
     def validblock(self, p, x, y, z, bt):
         if not (0 <= y < CHUNK_H): return False
@@ -499,6 +644,7 @@ class Instance:
 
             # dont burst seed+mods+players at once
             self.send(p, mkseed(self.seed))
+            self.send(p, mksun(self.sunang))
             time.sleep(0.01)
             # mods are baked into the chunk voxels
             self.send(p, mksvchunks(sorted(self.chunker.chunks.keys())))
@@ -522,6 +668,9 @@ class Instance:
                     f"TELEPORT:{pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f}"
                 ))
                 print(f"Restored {p.nm} to ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})")
+
+            elif self.wtype == "flat":
+                self.teleport(p, np.array([0.0, config.FLAT_SPAWN, 0.0]))
 
             if pd and 'health' in pd: p.health = max(0, min(MAX_HEALTH, int(pd['health'])))
             if pd and 'hunger' in pd: p.hunger = max(0, min(MAX_HUNGER, int(pd['hunger'])))
@@ -569,6 +718,50 @@ class Instance:
                         )
 
 
+                elif mt == MessageType.CART_PLACE:
+                    self.cartplace(p, *struct.unpack('<iiiB', data[1:]))
+
+                elif mt == MessageType.CART_USE:
+                    self.cartuse(p, *struct.unpack('<IB', data[1:]))
+
+                elif mt == MessageType.CART_RIDE:
+                    self.cartride(p, struct.unpack('<I', data[1:])[0])
+
+                elif mt == MessageType.CART_INPUT:
+                    p.cartfw, p.cartyaw = struct.unpack('<ff', data[1:])
+
+                elif mt == MessageType.CONT_OPEN:
+                    x, y, z = struct.unpack('<iii', data[1:])
+                    tl = self.chunker.rs.tiles
+                    s  = tl.snapshot(x, y, z)
+
+                    if s is None:
+                        ce = self.ents.get(x) if y < 0 else None
+                        if ce is None or not hasattr(ce, 'invt'): continue
+                        ce.invt(self.chunker)
+                        s = tl.snapshot(x, y, z)
+
+                    if y < 0:
+                        if np.linalg.norm(self.ents[x].pos - p.pos) > ENT_REACH: continue
+                    elif not self.inreach(p, x, y, z): continue
+
+                    if getattr(p, 'cont', None): tl.viewers(*p.cont, -1)
+                    p.cont = (x, y, z)
+                    tl.viewers(x, y, z, 1)
+                    self.send(p, mkcontdata(x, y, z, s))
+
+
+                elif mt == MessageType.CONT_CLOSE:
+                    if getattr(p, 'cont', None):
+                        self.chunker.rs.tiles.viewers(*p.cont, -1)
+                        p.cont = None
+
+                elif mt == MessageType.CONT_SET:
+                    x, y, z, si, iid, cnt = struct.unpack('<iiiHHB', data[1:])
+                    if getattr(p, 'cont', None) != (x, y, z): continue
+                    if cnt and (iid > self.MAX_BID and not REGISTRY.exists(iid)): continue
+                    self.chunker.rs.tiles.setslot(x, y, z, si, (iid, cnt) if cnt else None)
+
                 elif mt == MessageType.CHUNK_REQ:
                     cx, cz = p.reader.parse_chunkreq(data)
                     p.sentck.discard((cx, cz))
@@ -580,6 +773,11 @@ class Instance:
                         # resend the chunk, predicted->overwritten
                         p.sentck.discard((x // CHUNK_SZ, z // CHUNK_SZ))
                         continue
+
+                    self.notehand(p, x, y, z, bt)
+                    dr = self.doorplace(x, y, z, bt)
+                    if dr is False: p.sentck.discard((x // CHUNK_SZ, z // CHUNK_SZ))
+                    if dr is not None: continue
 
                     ignite = (bt == 0x4000)
                     if ignite: bt = 0
@@ -656,7 +854,8 @@ class Instance:
         executor = None
         for i in entities:
             if i.kind == "player" and i.source.pid == p.pid:
-                executor = i; break
+                executor = i
+                break
 
         if not executor:
             executor = entities[0] if entities else None
@@ -921,6 +1120,9 @@ class Instance:
 
 
     def disconn(self, p):
+        if getattr(p, 'ride', None) is not None and p.ride.rider is p: p.ride.rider = None
+        if getattr(p, 'cont', None): self.chunker.rs.tiles.viewers(*p.cont, -1)
+
         self.savepl(p)
         p.conn = False
         p.swake.set()
@@ -992,6 +1194,8 @@ class Instance:
                 lld = t0
             self.tickents(dt)
             #self.tickitems(dt)
+            self.chunker.rs.update(dt)
+
             self.flushblks()
             if t0 - lpos >= self.pint:
                 self._bcastpos()
@@ -1038,7 +1242,8 @@ class Instance:
         # late decor landed on chunks already sent -> they go again
         dd = self.chunker.decordirty
         if dd:
-            stale = set(dd); dd.clear()
+            stale = set(dd)
+            dd.clear()
             for p in pl: p.sentck -= stale
 
         r2 = self.STREAM_DIST * self.STREAM_DIST
@@ -1064,6 +1269,94 @@ class Instance:
                 if not c or not c.gen_ready: continue
                 self.send(p, mkchunk(k[0], k[1], c.voxels), low=True)
                 p.sentck.add(k)
+
+
+    def rsbodies(self, r=None):
+        r = [
+            (
+                p.pos[0], p.pos[1], 
+                p.pos[2], P_W / 2, True, P_H
+            ) for p in list(self.players.values())
+        ]
+
+        
+        with self.entlock:
+            for i in self.ents.values():
+                r.append((
+                    i.pos[0], i.pos[1], i.pos[2], 
+                    i.type.hw, i.kind != KIND_ITEM and 
+                    i.kind != KIND_TNT, i.type.h
+                ))
+
+        return r
+
+
+
+
+    
+
+    def rsmovers(self, r=None):
+        r = []
+        with self.entlock:
+            for e in self.ents.values():
+                hw, h = e.type.hw, e.type.h
+                r.append((
+                    (
+                        e.pos[0] - hw, e.pos[1], 
+                        e.pos[2] - hw, e.pos[0] + hw, 
+                        e.pos[1] + h, e.pos[2] + hw
+                    ),
+                    lambda dx, dy, dz, e=e: motion.shove(e, self.chunker, dx, dy, dz),
+                    lambda a, v, e=e: e.vel.__setitem__(a, v / TICK),
+                ))
+        return r
+
+
+
+
+    # spawn as entity
+    def rsdrop(self, x, y, z, b):
+        iid = POPITEM.get(b, b)
+        if not REGISTRY.exists(iid): return
+        o = lambda: random.random() * 0.5 + 0.25
+        self.itemdrop(
+            iid, 1, (x + o(), y + o(), z + o()), 
+            ((random.random() - 0.5) * 4.0, 4.0, (random.random() - 0.5) * 4.0)
+        )
+
+
+    def rsitemsin(self, x0, y0, z0, x1, y1, z1, r=None):
+        r = []
+        with self.entlock:
+            for e in self.ents.values():
+                if e.kind != KIND_ITEM: continue
+                if e.pos[0] + 0.125 <= x0 or e.pos[0] - 0.125 >= x1: continue
+                if e.pos[1] + 0.25  <= y0 or e.pos[1] >= y1:         continue
+                if e.pos[2] + 0.125 <= z0 or e.pos[2] - 0.125 >= z1: continue
+
+                def setn(n, e=e):
+                    e.cnt = n
+                    if n <= 0: e.kill()
+
+                r.append((e.iid, e.cnt, setn))
+
+        return r
+
+
+    
+    def contsend(self, x, y, z):
+        for p in list(self.players.values()):
+            c = getattr(p, 'cont', None)
+            if not c: continue
+            if c[1] != y or abs(c[0] - x) + abs(c[2] - z) > (0 if y < 0 else 1): continue
+
+            s = self.chunker.rs.tiles.snapshot(*c)
+            if s is not None: self.send(p, mkcontdata(*c, s))
+
+
+
+    def rsflush(self, chgs):
+        for x, y, z, bt in chgs: self.queueblk(x, y, z, bt)
 
 
     def queueblk(self, x, y, z, bt):
@@ -1362,21 +1655,34 @@ class Instance:
     """
 
 
-    def explodetnt(self, ex, ey, ez):
-        # centre of the 1x1x1 cube -> block it sits in
+    
+    
+    def explodetnt(self, ex, ey, ez, power=4.0, rails=False):
+        ey += 0.06125
         ox = int(math.floor(ex))
-        oy = int(math.floor(ey + 0.5))
+        oy = int(math.floor(ey))
         oz = int(math.floor(ez))
+
         chain = []
 
-        for dx, dy, dz in _TNT_OFFS:
+        for dx, dy, dz, _ in blast.sphere(power):
             bx, by, bz = ox + dx, oy + dy, oz + dz
             if by < 0 or by >= CHUNK_H: continue
 
-            prev = self.chunker.getblock(bx, by, bz)
-            if prev == 0: continue           # nothing to destroy
-            if prev == BEDROCK_ID: continue  # indestructible
+            v = self.chunker.rs.raw(bx, by, bz)
+            prev = v & 0x3FF
+            if prev == 0: continue
+            if blast.spared(self.chunker, bx, by, bz, prev, rails): continue
+
             if prev == TNT_ID: chain.append((bx, by, bz))
+            elif random.random() < 1.0 / power:
+                iid = pickitem(v)
+                if REGISTRY.exists(iid): 
+                    self.chunker.rs.spawnq.append((
+                        iid, 1, 
+                        (bx + 0.5, by + 0.5, bz + 0.5), 
+                        (0.0, 2.0, 0.0)
+                    ))
 
             cx, cz = bx // CHUNK_SZ, bz // CHUNK_SZ
             lx, lz = bx - cx * CHUNK_SZ, bz - cz * CHUNK_SZ
@@ -1385,11 +1691,10 @@ class Instance:
             self.queueblk(bx, by, bz, 0)
 
         for bx, by, bz in chain:
-            self.spawnent(
-                bx, by, bz,
-                random.uniform(TNT_CFUSE_MIN, TNT_CFUSE_MAX)
-            )
+            self.spawnent(bx, by, bz, (random.randrange(20) + 10) * 0.05)
 
+        with self.entlock: bodies = [blast.entbody(e) for e in self.ents.values() if e.kind != KIND_ITEM]
+        blast.affect(self.chunker, ex, ey, ez, power, bodies)
 
 
     def _bcastpos(self):

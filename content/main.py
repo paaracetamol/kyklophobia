@@ -50,6 +50,33 @@ from engine.lightmap import Lightmap, skydarken, skybright
 SKY_COL = np.array([0.5, 0.7, 1.0], dtype='f4')
 from entity.item.item import ItemEntityManager
 from entity.player._held import HeldItemRenderer
+from world.renderers.moving import MovingRenderer
+from config import TICK
+from entity import motion
+from world.redstone import (
+    POPITEM, TRAPS, ATTACHED, BUTTONS, ON_BIT, 
+    ATT_FLOOR, SUB_BIT, OPEN_BIT, OPENABLE, 
+    IRONDOOR, DOORS, DOORTOPS, PISTONS
+)
+from world.blocks import (
+    FURNACE, LEVER, REPEATER, COMPARATOR, REDSTONE_WIRE, 
+    TNT, TORCH, CHEST, TRAPPED_CHEST, DISPENSER, DROPPER, 
+    HOPPER, OBSERVER, NOTEBLOCK, DAYLIGHT_DETECTOR, 
+    DAYLIGHT_DETECTOR_INVERTED, TRIPWIRE_HOOK, TRIPWIRE
+)
+from world.container import SIZES
+from world.redstone import ALLRAILS, railshape
+from entity.core import KIND_CART, KIND_CHESTCART, KIND_FURNACECART, KIND_HOPPERCART
+from entity.minecart import CARTITEMS, CARTKINDS
+from ui.container import ContScreen
+
+# clicked face normal -> attach state
+ATTFACE = {(0,1,0): 0, (0,0,-1): 1, (0,0,1): 2, (1,0,0): 3, (-1,0,0): 4, (0,-1,0): 5}
+
+
+
+
+
 import _respath
 from commands.manager import CommandManager
 from items import textures as text_items
@@ -70,7 +97,7 @@ import keys
 
 
 class VoxelWorld:
-    def __init__(self, wname="default", svaddr=None, seed=None, managed=False):
+    def __init__(self, wname="default", svaddr=None, seed=None, managed=False, wtype=None):
         if not managed: pygame.init()
         self.managed = managed
 
@@ -194,6 +221,7 @@ class VoxelWorld:
         self.itementys       = None
         self.render_helditem = None
         self.render_extruded = None
+        self.render_moving   = None
         self.gamma_shader    = None
         
 
@@ -332,9 +360,11 @@ class VoxelWorld:
 
         self.wname    = wname
         self.svaddr   = svaddr
-        self.seed     = seed if seed is not None else SEED
-        self.noise    = PerlinNoise(seed=self.seed)
         
+        if svaddr: self.seed, self.wtype = seed if seed is not None else SEED, "default"
+        else:      self.seed, self.wtype = config.worldmeta(wname, seed, wtype)
+        self.noise    = PerlinNoise(seed=self.seed)
+
         self.trees = TreeManager(assetdir="assets")
         self.rocks = RockManager(assetdir="assets")
         self.ui       = UIManager(self.ctx, (WIN_W, WIN_H))
@@ -342,7 +372,7 @@ class VoxelWorld:
         
         
         self.p   = Player(
-            self, pos=np.array([0.0, 80.0, 0.0], dtype='f4')
+            self, pos=np.array([0.0, config.FLAT_SPAWN if self.wtype == "flat" else 80.0, 0.0], dtype='f4')
         )
         self.p.ui = self.ui
         self.p.inv = Inventory()
@@ -382,9 +412,20 @@ class VoxelWorld:
 
         self.chunker       = ChunkManager(self, render_dist=RENDER_DIST, wname=wname, is_server=True)
         self.chunker.ui    = self.ui
+
+        self.chunker.rs.ontnt  = self.rstnt
+        self.chunker.rs.ondrop = self.rsdrop
+        self.chunker.rs.bodies = self.rsbodies
+        self.chunker.rs.movers = self.rsmovers
+        self.chunker.rs.spawn  = self.rsspawn
+        self.chunker.rs.sunangle = lambda: self.sun_angle
+        self.chunker.rs.onnote = lambda x, y, z, n: self.particles.spawnnote(x, y, z, n)
+        self.chunker.rs.itemsin = self.rsitemsin
+
         self.itementys    = ItemEntityManager(self.ctx, self.texture, self)
         self.render_helditem = HeldItemRenderer(self.ctx, self.itementys)
         self.render_extruded = ExtrudedRenderer(self.ctx)
+        self.render_moving   = MovingRenderer(self.ctx, self.prog, self)
         self.ui.chatmsg("World loaded!", color=(200, 200, 200))
         self.clock = pygame.time.Clock()
         
@@ -430,6 +471,7 @@ class VoxelWorld:
         self.statelock   = threading.Lock()
         self.pmodpay     = None
         self.oninv       = False
+        self.cont        = None
         self.onchat      = False
         self.tabdown     = False
         self.ibuff       = ""
@@ -459,7 +501,101 @@ class VoxelWorld:
         
         
 
-    def bakefacing(self, blockId, _placement):
+    def bakefacing(self, blockId, _placement, _pos=None, _tb=None):
+
+        if blockId in ATTACHED or blockId == TORCH:
+            if _placement is None: return ATT_FLOOR
+
+            return ATTFACE.get(tuple(_placement), ATT_FLOOR)
+
+        
+        
+        if blockId == OBSERVER:
+            return self.bakefacing(PISTONS[0], _placement, _pos) ^ 1
+
+        if blockId in PISTONS or blockId in (DISPENSER, DROPPER):
+            if _pos is not None:
+                pp = self.p.getpos()
+                if abs(pp[0] - (_pos[0] + 0.5)) < 2.0 and abs(pp[2] - (_pos[2] + 0.5)) < 2.0:
+                    ey = pp[1] + self.p.physics.eye_h
+                    if ey - _pos[1] > 2.0: return 1
+                    if _pos[1] - ey > 0.0: return 0
+
+            fr = self.p.cam.front
+            if abs(fr[0]) > abs(fr[2]): 
+                return 4 if fr[0] > 0 else 5
+
+            return 2 if fr[2] > 0 else 3
+
+        
+        
+        if blockId == TRIPWIRE_HOOK:
+            if _placement is None: return 16
+            return {
+                (0,0,-1): FACE_N, (0,0,1): FACE_S, 
+                (1,0,0): FACE_E, (-1,0,0): FACE_W
+            }.get(tuple(_placement), 16)
+
+        
+        if blockId in (CHEST, TRAPPED_CHEST) and _pos is not None:
+            x, y, z = _pos
+            fr = self.p.cam.front
+            if abs(fr[0]) > abs(fr[2]): st = FACE_W if fr[0] > 0 else FACE_E
+            else:                       st = FACE_N if fr[2] > 0 else FACE_S
+
+            rw = self.chunker.rs.raw
+            if blockId in (rw(x, y, z - 1) & 0x3FF, rw(x, y, z + 1) & 0x3FF):
+                return st if st in (FACE_E, FACE_W) else FACE_E
+            if blockId in (rw(x - 1, y, z) & 0x3FF, rw(x + 1, y, z) & 0x3FF):
+                return st if st in (FACE_N, FACE_S) else FACE_S
+
+            return st
+
+
+
+        
+        if blockId == HOPPER:
+            if _placement is None: return 0
+            return {
+                (0,1,0): 0, (0,-1,0): 0, 
+                (0,0,-1): 3, (0,0,1): 2, 
+                (1,0,0): 4, (-1,0,0): 5
+            }.get(tuple(_placement), 0)
+
+
+        
+        if blockId in DOORS:
+            fr = self.p.cam.front
+            if abs(fr[0]) > abs(fr[2]): st = FACE_E if fr[0] > 0 else FACE_W
+            else:                       st = FACE_S if fr[2] > 0 else FACE_N
+
+            if _pos is None or _tb is None: return st
+            hx, hy, hz = self.p.hitat(_tb, _placement)
+
+            return st | (
+                8 if self.chunker.rs.doorhinge(*_pos, blockId, st, hx, hz) else 0
+            )
+
+        
+        
+        if blockId in TRAPS and _placement is not None:
+            dx, dy, dz = _placement
+            if dy == 0:
+
+                st = {
+                    (0,-1): FACE_N, (0,1): FACE_S, 
+                    (1,0): FACE_E, (-1,0): FACE_W
+                }[(dx, dz)]
+                
+                top = _tb is not None and self.p.hitat(_tb, _placement)[1] > 0.5
+
+            else:
+                fr = self.p.cam.front
+                if abs(fr[0]) > abs(fr[2]): st = FACE_W if fr[0] > 0 else FACE_E
+                else:                       st = FACE_N if fr[2] > 0 else FACE_S
+                top = dy < 0
+
+            return st | (8 if top else 0)
 
         ft = _FACINGTYPE[blockId]
         # print(ft, _placement)
@@ -491,6 +627,408 @@ class VoxelWorld:
     def issolid(self, x, y, z):
         return self.chunker.issolid(x, y, z)
 
+
+    def iscollide(self, x, y, z):
+        return self.chunker.iscollide(x, y, z)
+
+
+    def blocked(self, x0, y0, z0, x1, y1, z1):
+        return self.chunker.blocked(x0, y0, z0, x1, y1, z1)
+
+
+
+    # net thread
+    def onnotenet(self, x, y, z, n):
+        def play(): self.particles.spawnnote(x, y, z, n)
+        with self._tlock: self.ptasks.append(play)
+
+
+    # net thread
+    def oncontdata(self, x, y, z, snap):
+        c = self.cont
+        if c and c.pos == (x, y, z): c.sync(snap)
+
+
+    # net thread
+    def onpiston(self, x, y, z, v, f, ext, src, done):
+        self.chunker.rs.anims.append((x, y, z, v, f, ext, src, done))
+
+
+    def rsbodies(self, r=None):
+        r = [(*self.p.getpos(), self.p.physics.pw / 2, True, self.p.physics.ph)]
+        for i in self.itementys.items:
+            if i.active: r.append(
+                (i.pos[0], i.pos[1], i.pos[2], 0.125, False)
+            )
+        for i in self.blockentys.entities:
+            if i.alive: r.append(
+                (i.pos[0], i.pos[1], i.pos[2], 0.49, False)
+            )
+        for i in self.entitys.ents.values():
+            r.append(
+                (
+                    i.pos[0], i.pos[1], i.pos[2], 
+                    i.type.hw, i.kind != KIND_ITEM and 
+                    i.kind != KIND_TNT, i.type.h
+                )
+            )
+
+        return r
+
+
+
+
+    #shove
+    def rsmovers(self, r=None):
+        r = []
+        p = self.p
+        ph = p.physics
+
+        def pmove(dx, dy, dz):
+            fp, *_ = ph.movebox(p.pos, (dx, dy, dz), p.on_ground)
+            p.pos = fp
+
+        def pvel(a, v): p.vel[a] = v
+
+        hw = ph.pw / 2
+        r.append(
+            (
+                (
+                    p.pos[0] - hw, p.pos[1], 
+                    p.pos[2] - hw, p.pos[0] + hw, 
+                    p.pos[1] + ph.ph, p.pos[2] + hw
+                ), pmove, pvel
+            )
+        )
+
+        if not (self.netclient and self.netclient.isconn()):
+            for i in self.itementys.items:
+                if not i.active: continue
+                r.append((
+                    (
+                        i.pos[0] - 0.125, i.pos[1], 
+                        i.pos[2] - 0.125, i.pos[0] + 0.125, 
+                        i.pos[1] + 0.25, i.pos[2] + 0.125
+                    ),
+                    lambda dx, dy, dz, i=i: i.pos.__iadd__(np.array((dx, dy, dz), dtype='f4')),
+                    lambda a, v, i=i: i.vel.__setitem__(a, v / TICK),
+                ))
+
+            
+            
+            for i in self.blockentys.entities:
+                if not i.alive: continue
+                r.append((
+                    (
+                        i.pos[0] - 0.49, i.pos[1], 
+                        i.pos[2] - 0.49, i.pos[0] + 0.49, 
+                        i.pos[1] + 0.98, i.pos[2] + 0.49
+                    ),
+                    lambda dx, dy, dz, i=i: (i.pos.__iadd__(np.array((dx, dy, dz), dtype='f4')), setattr(i, '_on_ground', False)),
+                    lambda a, v, i=i: setattr(i, 'vy', v / TICK) if a == 1 else None,
+                ))
+
+            for i in self.entitys.ents.values():
+                hw, h = i.type.hw, i.type.h
+                r.append((
+                    (
+                        i.pos[0] - hw, i.pos[1], 
+                        i.pos[2] - hw, i.pos[0] + hw, 
+                        i.pos[1] + h, i.pos[2] + hw
+                    ),
+                    lambda dx, dy, dz, i=i: motion.shove(i, self.chunker, dx, dy, dz),
+                    lambda a, v, i=i: i.vel.__setitem__(a, v / TICK),
+                ))
+
+        return r
+
+
+    def rsspawn(self, iid, cnt, pos, vel):
+        i = self.itementys.spawn(iid, cnt, np.array(pos, dtype='f4'))
+        if i: i.vel = np.array(vel, dtype='f4')
+
+
+    def rsitemsin(self, x0, y0, z0, x1, y1, z1, r=None):
+
+        r = []
+        for i in list(self.itementys.items):
+            if not i.active: continue
+            if i.pos[0] + 0.125 <= x0 or i.pos[0] - 0.125 >= x1: continue
+            if i.pos[1] + 0.25  <= y0 or i.pos[1] >= y1:         continue
+            if i.pos[2] + 0.125 <= z0 or i.pos[2] - 0.125 >= z1: continue
+
+            def setn(n, i=i):
+                i.count = n
+                if n <= 0:
+                    i.active = False
+                    if i in self.itementys.items: 
+                        self.itementys.items.remove(i)
+
+            r.append((i.itemId, i.count, setn))
+
+        return r
+
+
+    def rstnt(self, x, y, z, fuse=None):
+        if fuse is None: self.blockentys.activate(x, y, z, TNT)
+        else:            self.blockentys.activate(x, y, z, TNT, fuse=fuse)
+
+
+    def rsdrop(self, x, y, z, b):
+        if b == REDSTONE_WIRE: self.render_extruded.rm_block(x, y, z)
+        if not self.p.gmode: self.dropblock(x, y, z, POPITEM.get(b, b))
+
+
+    # neigbor turns match
+    def chestalign(self, x, y, z, b, st):
+        rw = self.chunker.rs.raw
+        for nx, nz in (
+            (x, z - 1), (x, z + 1), 
+            (x - 1, z), (x + 1, z)
+        ):
+            v = rw(nx, y, nz)
+            if v & 0x3FF == b and (v >> 10) & 3 != st:
+                nv = b | (st << 10) | 0x8000
+
+                self.chunker.setblock(nx, y, nz, nv)
+                if self.isnet(): self.netclient.sendchange(nx, y, nz, nv)
+
+
+
+    # itemuse : +0.0625, +0.5 on slope
+    def placecart(self, x, y, z, item=None):
+        v = self.chunker.rs.raw(x, y, z)
+        if v & 0x3FF not in ALLRAILS: return False
+
+        kd = CARTITEMS.get(item, KIND_CART)
+
+        if self.isnet(): self.netclient.sendcartplace(x, y, z, kd)
+        else:
+            self.entitys.spawn(
+                kd, pos=(
+                    x + 0.5, y + 0.0625 + 
+                    (0.5 if railshape(v) in (2, 3, 4, 5) else 0.0)
+                    , z + 0.5
+            ))
+
+        if not self.p.gmode: self.p.inv.remove(self.p._slot, 1)
+        return True
+
+
+
+
+    
+
+    def clickcart(self):
+        if self.p.ride is not None: return False
+
+        org, dr = self.p.cam.pos, self.p.cam.front
+        e = self.entitys.pick(org, dr, ENT_REACH)
+        if e is None or e.kind not in CARTKINDS: return False
+
+        if self.p.crouching and e.kind != KIND_FURNACECART: return False
+
+        ed = motion.rayaabb(org, dr, e.aabb(), ENT_REACH)
+        tb = self.p.targetblock(ENT_REACH)[0]
+
+        if tb and self.chunker.rs.raw(*tb) & 0x3FF not in ALLRAILS:
+            bd = motion.rayaabb(org, dr, (
+                tb[0], tb[1], tb[2], 
+                tb[0] + 1, tb[1] + 1, tb[2] + 1
+            ), ENT_REACH)
+
+            if bd is not None and bd < ed: return False
+
+        if e.kind != KIND_CART: return self.usecart(e)
+
+
+        if self.isnet(): self.netclient.sendcartride(e.eid)
+        else:
+            if e.rider is not None: return True
+            e.rider = self.p
+
+        self.p.ride = e
+
+        return True
+
+
+
+
+
+
+    def usecart(self, e):
+        st   = self.getstack()
+        coal = bool(st and st.item.itemId == text_items.COAL)
+        if e.kind in (KIND_CHESTCART, KIND_HOPPERCART) or (
+            e.kind == KIND_FURNACECART and not coal and not self.p.sneaking
+        ):
+            b = {KIND_CHESTCART: CHEST, KIND_HOPPERCART: HOPPER}.get(e.kind, FURNACE)
+            n = {CHEST: 27, HOPPER: 5}.get(b, 1)
+            tl = self.chunker.rs.tiles
+
+            def setslot(i, st):
+                if self.isnet(): self.netclient.sendcontset(e.eid, -1, 0, i, st)
+                else:            tl.setslot(e.eid, -1, 0, i, st)
+
+            self.cont = ContScreen(e.eid, -1, 0, b, n, self.p.inv, setslot)
+
+            if self.isnet(): self.netclient.sendcontopen(e.eid, -1, 0)
+            else:            e.invt(self.chunker)
+
+            self.oninv = True
+            self.p.vel[0] = 0.0
+            self.p.vel[2] = 0.0
+
+            pygame.event.set_grab(False)
+            pygame.mouse.set_visible(True)
+
+        elif e.kind == KIND_FURNACECART:
+            pp   = self.p.getpos()
+
+            if self.isnet(): self.netclient.sendcartuse(e.eid, coal)
+            else:            e.use(float(pp[0]), float(pp[2]), coal)
+
+            if coal and not self.p.gmode: 
+                self.p.inv.remove(self.p._slot, 1)
+
+        return True
+
+
+
+
+    def oncartlit(self, eid, fuse):
+        def f():
+            e = self.entitys.byeid(eid)
+            if e is not None: e.fuse = fuse
+
+        with self._tlock: self.ptasks.append(f)
+
+
+    def oncartboom(self, x, y, z, pw, rl):
+        def f(): self.entitys.cartboom(x, y, z, pw, bool(rl))
+        with self._tlock: self.ptasks.append(f)
+
+
+    def oncartoff(self, c):
+        if self.isnet(): self.netclient.sendcartride(0)
+        elif c.rider is self.p: c.rider = None
+
+
+    def isnet(self): 
+        return self.netclient and self.netclient.isconn()
+
+
+    def opencont(self, x, y, z, b):
+        tl = self.chunker.rs.tiles
+        if b in (CHEST, TRAPPED_CHEST) and tl.view(x, y, z) is None: 
+            return True  # block above
+
+        n = len(tl.view(x, y, z, True))
+
+
+        def setslot(i, st):
+            if self.isnet(): self.netclient.sendcontset(x, y, z, i, st)
+            else: tl.setslot(x, y, z, i, st)
+
+        self.cont = ContScreen(x, y, z, b, n, self.p.inv, setslot)
+        if self.isnet(): self.netclient.sendcontopen(x, y, z)
+        else: tl.viewers(x, y, z, 1)
+
+
+        self.oninv = True
+        self.p.vel[0] = 0.0
+        self.p.vel[2] = 0.0
+        pygame.event.set_grab(False)
+        pygame.mouse.set_visible(True)
+
+        return True
+
+
+        
+
+
+    def closecont(self):
+        c = self.cont
+        if not c: return
+        self.cont = None
+        x, y, z = c.pos
+
+        if self.isnet(): self.netclient.sendcontclose(x, y, z)
+        else: self.chunker.rs.tiles.viewers(x, y, z, -1)
+
+        h = self.p.inv._held
+
+        if h:
+            self.p.inv._held = None
+            if not self.p.inv.add(h.item.itemId, h.count): 
+                self.dropblock(*c.pos, h.item.itemId)
+                
+
+
+    def synccont(self):
+        c = self.cont
+        if not c: return
+        x, y, z = c.pos
+        if (self.entitys.byeid(x) is None) if y < 0 else (self.chunker.rs.raw(x, y, z) & 0x3FF != c.b):
+            self.closecont()
+            self.oninv = False
+
+            pygame.event.set_grab(True)
+            pygame.mouse.set_visible(False)
+
+            return
+
+        c.sync(None if self.isnet() else self.chunker.rs.tiles.snapshot(x, y, z))
+
+        
+
+
+    
+
+    def useblock(self, x, y, z):
+        v = self.chunker.rs.raw(x, y, z)
+        b = v & 0x3FF
+        st = (v >> 10) & 0x1F
+
+        if b == LEVER: st ^= ON_BIT
+        elif b in BUTTONS:
+            if st & ON_BIT: return True
+            st |= ON_BIT
+
+        elif b == REPEATER:  st = (st & 0x13) | ((st + 4) & 0xC)
+        elif b == COMPARATOR: st ^= SUB_BIT
+        elif b in SIZES: return self.opencont(x, y, z, b)
+        elif b in (DAYLIGHT_DETECTOR, DAYLIGHT_DETECTOR_INVERTED):
+            b = DAYLIGHT_DETECTOR if b == DAYLIGHT_DETECTOR_INVERTED else DAYLIGHT_DETECTOR_INVERTED
+
+        elif b == NOTEBLOCK:
+            st = (st + 1) % 25
+            self.particles.spawnnote(x, y, z, st)
+
+        elif b in OPENABLE and b not in IRONDOOR:
+            st ^= OPEN_BIT
+            o = y + 1 if b in DOORS else (y - 1 if b in DOORTOPS else None)
+
+            if o is not None:
+                ov = (self.chunker.rs.raw(x, o, z) & 0x3FF) | (st << 10) | 0x8000
+                self.chunker.setblock(x, o, z, ov)
+                if self.netclient and self.netclient.isconn():
+                    self.netclient.sendchange(x, o, z, ov)
+
+        else: 
+            return False
+
+
+        nv = b | (st << 10) | 0x8000
+        self.chunker.setblock(x, y, z, nv)
+        if self.netclient and self.netclient.isconn():
+            self.netclient.sendchange(x, y, z, nv)
+
+        return True
+
+
+
+
     
     # fx only
     def hurtfx(self, dmg):
@@ -509,6 +1047,13 @@ class VoxelWorld:
 
     def breakblock(self, bx, by, bz):
         bt = self.chunker.getblock(bx, by, bz)
+
+        
+        st_ = self.getstack()
+        if bt == TRIPWIRE and st_ and st_.item.itemId == text_items.SHEARS:
+            v = self.chunker.rs.raw(bx, by, bz)
+            self.chunker.setblock(bx, by, bz, v | (8 << 10))
+
 
         # fuckass redstonbe
         from world.blocks import REDSTONE_WIRE
@@ -713,6 +1258,11 @@ class VoxelWorld:
                 
 
             self.onmine(dt)
+            self.chunker.rs.update(dt)
+            if self.p.ride is not None and self.isnet():
+                self.netclient.sendcartinput(self.p.ya, self.p.cam.yaw)
+
+            self.synccont()
 
             if self.groundready(): self.p.update(dt)
             self.particles.update(dt)
@@ -746,6 +1296,7 @@ class VoxelWorld:
                 hid    = st.item.itemId if st else 0
                 aflags = 0
                 if self.p.is_breaking or self.p.is_placing: aflags |= 1  # swing
+                if self.p.ride is not None: aflags |= 4  # sitting
                 if self.p.crouching: aflags |= 2  # sneak
                 aflags |= (self.p.swseq & 3) << 4
                 
@@ -855,8 +1406,8 @@ class VoxelWorld:
             self.ctx.disable(moderngl.BLEND)
             rendered = self.chunker.renderall(cpos, cfr, far, pass_type=0)
 
-            self.ctx.enable(moderngl.BLEND)
-            self.chunker.renderall(cpos, cfr, far, pass_type=1)
+            #3self.ctx.enable(moderngl.BLEND)
+            #self.chunker.renderall(cpos, cfr, far, pass_type=1)
             self.ctx.disable(moderngl.BLEND)
 
             self.texture.use(0)
@@ -984,7 +1535,8 @@ class VoxelWorld:
                     headyawoff=ps.headyaw,
                     crouch=self.p._smthcrouch,
                     _hidehead=(self.p.cmode == 0 and not self.p.freecam),
-                    hurt=max(0.0, self.p.hurtt / HURT_T)
+                    hurt=max(0.0, self.p.hurtt / HURT_T),
+                    sit=self.p.ride is not None
                 )
             
             
@@ -993,16 +1545,40 @@ class VoxelWorld:
             
             
             
+            if not fpview: 
+                self.render_helditem.render(mvp, self.p, self.sun_dir)
+
+            
+            self.ctx.enable(moderngl.CULL_FACE)
+            self.ctx.enable(moderngl.BLEND)
+
+            self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+            self.texture.use(0)
+            self.lightmap.use(4)
+
+            self.prog['mvp'].write(mvpb)
+
+            self.chunker.renderall(cpos, cfr, far, pass_type=1)
+            self.render_moving.render(self.chunker.rs, self.chunker.rs.accum / TICK)
+            self.render_moving.rendercarts(self.entitys.ents.values())
+
+            self.ctx.disable(moderngl.CULL_FACE)
+
+
+
             if fpview:
                 ey = self.p.eyepos()
-                sl, bl = self.chunker.getlight(int(math.floor(ey[0])), int(math.floor(ey[1])), int(math.floor(ey[2])))
+                sl, bl = self.chunker.getlight(
+                    int(math.floor(ey[0])), 
+                    int(math.floor(ey[1])), 
+                    int(math.floor(ey[2]))
+                )
+
                 lt = self.lightmap.px[sl, bl]
                 self.render_helditem.renderfp(
                     self.pmodel, self.p, self.sun_dir,
                     (lt[0] / 255.0, lt[1] / 255.0, lt[2] / 255.0)
                 )
-            else:
-                self.render_helditem.render(mvp, self.p, self.sun_dir)
             
             self.ctx.enable(moderngl.CULL_FACE)
             self.ctx.disable(moderngl.BLEND)
@@ -1133,6 +1709,7 @@ class VoxelWorld:
                 nametags  = [],
                 keybinds  = keybinds if self.showhud else None,
                 renderinv = self.oninv,
+                cont = self.cont,
                 inv = self.p.inv, 
                 pmodel = self.pmodel,
                 
@@ -1194,12 +1771,15 @@ class VoxelWorld:
             self.entitys.release()
         if self.entdbg: self.entdbg.release()
         if self.render_extruded: self.render_extruded.cleanup()
-        if self.gamma_shader:   self.gamma_shader.release()
+        if self.render_moving:   self.render_moving.release()
+        if self.gamma_shader:    self.gamma_shader.release()
         self.chunker.shutdown()
     
     def worldctx(self):
         return {
             'chunker':    self.chunker,
+            'entitys':    self.entitys,
+            'itementys':  self.itementys,
             'particles':  self.particles,
             'player':        self.p,
             'netclient':     self.netclient,
@@ -1396,7 +1976,9 @@ class VoxelWorld:
                         fuse=unpacktnt(pay), _remote=True, eid=eid,
                     )
                     e = self.blockentys.byeid(eid)
-                    if e is not None: e.pos = pos.copy(); e.tpos = pos.copy()
+                    if e is not None:
+                        e.pos  = pos.copy()
+                        e.tpos = pos.copy()
 
 
                 elif kind == KIND_ITEM:
@@ -1553,6 +2135,13 @@ class VoxelWorld:
 
         self.netclient.on_seed        = on_seed
         self.netclient.on_update      = on_update
+        self.netclient.on_piston      = self.onpiston
+        self.netclient.on_contdata    = self.oncontdata
+        self.netclient.on_cartkick    = lambda: self.p.getoff()
+        self.netclient.on_cartlit     = self.oncartlit
+        self.netclient.on_cartboom    = self.oncartboom
+        self.netclient.on_sun         = lambda a: setattr(self, 'sun_angle', a)
+        self.netclient.on_note        = self.onnotenet
         self.netclient.on_entspawn    = on_entspawn
         #self.netclient.on_entpos      = on_entpos
         self.netclient.on_entstate    = on_entstate
@@ -1624,7 +2213,8 @@ class VoxelWorld:
                 body_y=ps.body_y,
                 headyawoff=ps.headyaw,
                 crouch=crch, tex=self.rskins.get(p.pid),
-                hurt=max(0.0, p.hurtt / HURT_T)
+                hurt=max(0.0, p.hurtt / HURT_T),
+                sit=bool(p.aflags & 4)
             )
 
             if p._held > 0 and self.render_helditem:

@@ -105,7 +105,7 @@ TEXTURES = {
     "double_plant_paeonia_top": (6, 4),
     "double_plant_rose_bottom": (7, 4),
     "double_plant_rose_top": (8, 4),
-    "double_plant_sunflower_back": (9, 4),
+    #"double_plant_sunflower_back": (9, 4),
     "double_plant_sunflower_bottom": (10, 4),
     "double_plant_sunflower_front": (11, 4),
     "double_plant_sunflower_top": (12, 4),
@@ -307,9 +307,22 @@ TEXTURES = {
     "quartz_block_lines_top": (10, 13),
     "quartz_block_side": (11, 13),
     "quartz_block_top": (12, 13),
-    "quartz_ore": (13, 13),
     "rail_activator": (14, 13),
     "rail_activator_powered": (15, 13),
+    "observer_front": (8, 18),
+    "observer_back": (9, 18),
+    "observer_back_lit": (10, 18),
+    "observer_side": (11, 18),
+    "observer_top": (12, 18),
+    "note_particle": (13, 18),
+    "trip_wire": (14, 18),
+    "chest_top": (15, 18),
+    "chest_side": (16, 18),
+    "chest_front": (17, 18),
+    "chest_dfl": (18, 18),
+    "chest_dfr": (19, 18),
+    "quartz_ore": (13, 13),
+    "double_plant_sunflower_back": (9, 4),
     "rail_detector": (16, 13),
     "rail_detector_powered": (17, 13),
     "rail_golden": (18, 13),
@@ -742,6 +755,9 @@ LADDER = 267
 PISTON = 268
 STICKY_PISTON = 269
 PISTON_HEAD = 270
+MOVING_PISTON = 336
+OBSERVER = 337
+TRIPWIRE = 338
 
 DISPENSER = 271
 DROPPER = 272
@@ -889,6 +905,8 @@ BLOCK_FACES = {
     CRAFTING_TABLE: ("crafting_table_top", "planks_oak", "crafting_table_front", "crafting_table_side", "crafting_table_front", "crafting_table_side"),
     FURNACE: ("furnace_top", "furnace_top", "furnace_front_off", "furnace_side", "furnace_side", "furnace_side"),
     NOTEBLOCK: "noteblock",
+    TRIPWIRE: "trip_wire",
+    OBSERVER: ("observer_top", "observer_top", "observer_front", "observer_back", "observer_side", "observer_side"),
     JUKEBOX: ("jukebox_top", "jukebox_side", "jukebox_side", "jukebox_side", "jukebox_side", "jukebox_side"),
     MELON: ("melon_top", "melon_top", "melon_side", "melon_side", "melon_side", "melon_side"),
     PUMPKIN: ("pumpkin_top", "pumpkin_top", "pumpkin_face_off", "pumpkin_side", "pumpkin_side", "pumpkin_side"),
@@ -1262,7 +1280,7 @@ TRANSP_BLOCKS = {
 }
 
 
-NONSOLID_BLOCKS = {AIR, WATER, TALLGRASS, LAVA, FIRE, WATER_FLOWING, LAVA_FLOWING}
+NONSOLID_BLOCKS = {AIR, WATER, TALLGRASS, LAVA, FIRE, WATER_FLOWING, LAVA_FLOWING, MOVING_PISTON}
 CROSS_BLOCKS = {TALLGRASS, FIRE}
 
 
@@ -1305,9 +1323,16 @@ _FACINGTYPE = np.zeros(MAX_ID, dtype=np.int8)
 # horiz
 for _bid in (
     FURNACE, FURNACE_ON, PUMPKIN, JACK_O_LANTERN,
-    CRAFTING_TABLE, DISPENSER, DROPPER,
+    CRAFTING_TABLE,
     CHEST, TRAPPED_CHEST, ENDER_CHEST,
-    REPEATER, COMPARATOR
+    REPEATER, COMPARATOR,
+    OAK_DOOR_BOTTOM, OAK_DOOR_TOP, IRON_DOOR_BOTTOM, IRON_DOOR_TOP,
+    SPRUCE_DOOR_BOTTOM, SPRUCE_DOOR_TOP, BIRCH_DOOR_BOTTOM, BIRCH_DOOR_TOP,
+    JUNGLE_DOOR_BOTTOM, JUNGLE_DOOR_TOP, ACACIA_DOOR_BOTTOM, ACACIA_DOOR_TOP,
+    DARK_OAK_DOOR_BOTTOM, DARK_OAK_DOOR_TOP,
+    OAK_TRAPDOOR, IRON_TRAPDOOR,
+    OAK_FENCE_GATE, SPRUCE_FENCE_GATE, BIRCH_FENCE_GATE,
+    JUNGLE_FENCE_GATE, ACACIA_FENCE_GATE, DARK_OAK_FENCE_GATE,
 ):
     _FACINGTYPE[_bid] = FACING_H
 

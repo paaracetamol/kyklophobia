@@ -52,6 +52,7 @@ def text_ascii():    return os.path.join(_getactive(), "textures", "ui", "ascii.
 def text_font():     return os.path.join(_getactive(), "textures", "ui", "font.png")
 def text_gui():      return os.path.join(_getactive(), "textures", "ui", "gui.png")
 def text_inv():      return os.path.join(_getactive(), "textures", "ui", "inventory.png")
+def text_cont(nm):  return os.path.join(_getactive(), "textures", "ui", f"{nm}.png")
 
 
 # models

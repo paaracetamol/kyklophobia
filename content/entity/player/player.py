@@ -102,6 +102,7 @@ class Player:
         bids     = [1, 2, 3, 12, 6, 7, 8, 14, 11]
         self.inv = [{'id': bid, 'count': 64} for bid in bids]
         self._slot = 0
+        self.ride  = None   # cart
 
         # first person hand
         self.eq    = 0.0;  self.oeq   = 0.0
@@ -299,6 +300,34 @@ class Player:
 
 
     
+    # dismount entity
+    def getoff(self):
+        r = self.ride
+        self.ride = None
+
+        if r is None: return
+
+        ph = self.physics
+        x, y, z = float(r.pos[0]), float(r.pos[1]), float(r.pos[2])
+
+        for dx, dz in (
+            (1.0, 0.0), (-1.0, 0.0), 
+            (0.0, 1.0), (0.0, -1.0), 
+            (0.0, 0.0)
+        ):
+            if ph.freeat(x + dx, y + 0.1, z + dz):
+                self.pos = np.array((x + dx, y + 0.1, z + dz), dtype='f4')
+                break
+        else:
+            self.pos = np.array((x, y + 1.0, z), dtype='f4')
+
+
+        self.opos = self.pos.copy()
+        self.vel[:] = 0.0
+
+
+
+
     def tickhand(self):
         self.oeq   = self.eq
         self.oarmp = self.armp
@@ -318,6 +347,29 @@ class Player:
         ph = self.physics
         self.opos = self.pos.copy()
         self.tickhand()
+
+        # in cart
+        if self.ride is not None:
+            r = self.ride
+
+
+            if not r.alive or self.sneaking:
+                self.getoff()
+                self.world.oncartoff(r)
+
+            else:
+                self.pos = r.pos.copy()
+                self.pos[1] += -0.35
+                self.vel[:] = 0.0
+                self.on_ground = True
+
+                # block limbswing
+                self.anim.tick(
+                    self.pos[0], self.pos[2], 
+                    self.pos[0], self.pos[2], 
+                    self.cam.yaw, True
+                )
+                return
 
         if self.sprtrig > 0: self.sprtrig -= 1
         if self.nojumpd > 0: self.nojumpd -= 1
@@ -435,8 +487,7 @@ class Player:
             self.vel = ph.drag(self.vel, wasgrnd, fric)
 
         
-        if not self.fly: self.vel = ph.pushout(self.pos, self.vel)
-
+        #if not self.fly: self.vel = ph.pushout(self.pos, self.vel)
         
         self.yslide = SNEAK_EYE if self.sneaking else 0.0
 
@@ -569,7 +620,7 @@ class Player:
             bob_x = math.sin(self.bob_time) * self.bob_amp
             bob_y = math.sin(self.bob_time * 2.0) * self.bob_amp
             ceil_y = self.rpos[1] + self.physics.ph + 0.1
-            if self.physics.isblocksolid(self.rpos[0], ceil_y, self.rpos[2]):
+            if self.physics.blockedat(self.rpos[0], ceil_y, self.rpos[2]):
                 if bob_y > 0: bob_y *= 0.2
             ep[0] += math.cos(yr) * bob_x
             ep[2] += math.sin(yr) * bob_x
@@ -586,7 +637,7 @@ class Player:
             ad  = td
             for d in np.arange(0, td, 0.1):
                 chk = ep + dir * d
-                if self.physics.isblocksolid(int(chk[0]), int(chk[1]), int(chk[2])):
+                if self.physics.blockedat(int(chk[0]), int(chk[1]), int(chk[2])):
                     ad = max(0.2, d - 0.2);  break
                     
             self.cam.pos = ep + dir * ad
@@ -611,7 +662,7 @@ class Player:
             
             for d in np.arange(0, self.orbital_distance, 0.1):
                 chk = ep + cdir * d
-                if self.physics.isblocksolid(int(chk[0]), int(chk[1]), int(chk[2])):
+                if self.physics.blockedat(int(chk[0]), int(chk[1]), int(chk[2])):
                     ad = max(1.0, d - 0.5);  break
                     
                     
@@ -742,6 +793,21 @@ class Player:
         """
 
         return None
+
+    # where ray crosses clicked face
+    # block local 0-1
+    def hitat(self, tb, face):
+        a = 0 if face[0] else (1 if face[1] else 2)
+        d = self.cam.front
+
+        if d[a] == 0: return (0.5, 0.5, 0.5)
+        pl = tb[a] + (1 if face[a] > 0 else 0)
+        t  = (pl - self.eye[a]) / d[a]
+
+        return tuple(
+            max(0.0, min(1.0, float(self.eye[i] + d[i] * t - tb[i]))) for i in range(3)
+        )
+
 
     def targetblock(self, max_dist=RAYCAST_DIST):
         start = self.eye.copy()

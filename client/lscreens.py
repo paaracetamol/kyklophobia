@@ -312,9 +312,16 @@ class WorldListScreen(Screen):
         ))
 
     def _dorec(self, nm):
-        p = os.path.join(save_dir(), nm)
+        p  = os.path.join(save_dir(), nm)
+        fp = os.path.join(p, "world.json")
+        m  = None
+        if os.path.exists(fp):
+            with open(fp) as f: m = f.read()
         if os.path.isdir(p): shutil.rmtree(p)
         os.makedirs(p, exist_ok=True)
+
+        if m:
+            with open(fp, 'w') as f: f.write(m)
         self.L.setscreen(WorldListScreen(self.L))
 
     def update(self, mx, my):
@@ -334,6 +341,7 @@ class WorldListScreen(Screen):
         surf.blit(self.bfont.render(f"{item['nm']}  ({item['size_kb']} KB)", False, GRAY), (x, ty + lh))
         lp = item.get("last_played", "")
         if lp: surf.blit(self.bfont.render(lp, False, GRAY), (x, ty + lh * 2))
+        surf.blit(self.bfont.render(f"World Type: {item['wtype'].capitalize()}", False, GRAY), (x, ty + lh * 3))
 
 
 
@@ -353,6 +361,9 @@ class CreateWorldScreen(Screen):
         )
         self.inputs = [self.ti_name, self.ti_seed]
         gc = GUI_W // 2
+
+        self.wtype = "default"
+        self.btn_type   = self.btn_gui(gc - 75,  184, 150, "World Type: Default")
         self.btn_create = self.btn_gui(gc - 154, 210, 150, "Create and Play")
         self.btn_cancel = self.btn_gui(gc + 4,   210, 150, "Cancel")
 
@@ -366,10 +377,19 @@ class CreateWorldScreen(Screen):
             if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 mx, my = e.pos
                 if   self.btn_create.clk(mx, my): self.create()
+                elif self.btn_type.clk(mx, my):   self.cycletype()
                 elif self.btn_cancel.clk(mx, my): self.L.setscreen(WorldListScreen(self.L))
 
             if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
                 self.L.setscreen(WorldListScreen(self.L))
+
+
+
+    def cycletype(self):
+        self.wtype = "flat" if self.wtype == "default" else "default"
+        self.btn_type.text = f"World Type: {self.wtype.capitalize()}"
+
+
 
     def create(self):
         raw  = self.ti_name.text.strip()
@@ -386,7 +406,7 @@ class CreateWorldScreen(Screen):
         st   = self.ti_seed.text.strip()
         seed = int(st) if st.lstrip('-').isdigit() else (hash(st) & 0x7FFFFFFF if st else None)
 
-        self.L.bootworld(safe, seed=seed)
+        self.L.bootworld(safe, seed=seed, wtype=self.wtype)
 
     def draw(self, surf):
         t = self.bfont.render("Create New World", False, WHITE)

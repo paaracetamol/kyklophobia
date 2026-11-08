@@ -4,6 +4,8 @@ import numpy as np
 
 from entity.blockenty.base import BlockEntity
 from entity.blockenty.registry import regblockent, regitemblock
+from config import TICK
+from entity import motion, blast
 
 
 FUSE_TIME       = 4.0
@@ -38,6 +40,102 @@ def buildsphere(radius):
 BLAST_OFF = buildsphere(BLAST_RADIUS)
 
 
+# World.createExplosion on this side. destruction is the plain sphere, entities get vanilla's sums
+def explodeat(wc, ex, ey, ez, power, rails=False, skip=None):
+    chunker = wc.get('chunker')
+    pmgr  = wc.get('particles')
+    p     = wc.get('player')
+    nc    = wc.get('netclient')
+    bemgr = wc.get('blockentys')
+    ents  = wc.get('entitys')
+    items = wc.get('itementys')
+
+    cx = int(math.floor(ex))
+    cy = int(math.floor(ey))
+    cz = int(math.floor(ez))
+    from world.blocks import TNT as TNT_ID
+    from world.redstone import pickitem
+    from items.registry import REGISTRY
+    online = nc and nc.isconn()
+
+    if chunker:
+        cpos, npos = [], []
+        for dx, dy, dz, dist in blast.sphere(power):
+            bx, by, bz = cx + dx, cy + dy, cz + dz
+            bt = chunker.getblock(bx, by, bz)
+            if not bt: continue
+            if blast.spared(chunker, bx, by, bz, bt, rails): continue
+            if bt == TNT_ID: cpos.append((bx, by, bz))
+            else:            npos.append((bx, by, bz, dist))
+
+        if online:
+            # server does the block destruction, this is just the show
+            if pmgr:
+                for bx, by, bz, dist in npos:
+                    if dist <= power * 0.6: pmgr.spawn(bx, by, bz, chunker.getblock(bx, by, bz))
+        else:
+            rm = chunker.batchbreak([(bx, by, bz) for bx, by, bz, _ in npos])
+            for bx, by, bz, dist in npos:
+                v = rm.get((bx, by, bz))
+                if v is None: continue
+                if pmgr and dist <= power * 0.6: pmgr.spawn(bx, by, bz, v)
+                # Block.dropBlockAsItemWithChance, 1 / power
+                iid = pickitem(v)
+                if random.random() < 1.0 / power and REGISTRY.exists(iid) and chunker.rs.spawn:
+                    chunker.rs.spawn(iid, 1, (bx + 0.5, by + 0.5, bz + 0.5), (0.0, 2.0, 0.0))
+
+            # BlockTNT.onBlockDestroyedByExplosion: nextInt(20) + 10 ticks
+            if bemgr is not None and not online:
+                for bx, by, bz in cpos:
+                    chunker.breakblock(bx, by, bz)
+                    bemgr.activate(bx, by, bz, TNT_ID, fuse=(random.randrange(20) + 10) * TICK)
+
+    bodies = []
+    if p:
+        hw, ph = p.physics.pw / 2, p.physics.ph
+        px, py, pz = float(p.pos[0]), float(p.pos[1]), float(p.pos[2])
+
+        def phit(dmg, dx, dy, dz):
+            p.vel[0] += dx;  p.vel[1] += dy;  p.vel[2] += dz
+            p.on_ground = False
+            if not p.gmode: p.hurt(dmg)
+
+        bodies.append((px, py, pz, p.physics.eye_h, (px - hw, py, pz - hw, px + hw, py + ph, pz + hw), phit))
+
+    if not online and chunker:
+        if ents: bodies += [blast.entbody(i) for i in list(ents.ents.values())]
+        if bemgr is not None:
+            for i in bemgr.entities:
+                if i is skip or not i.alive or not isinstance(i, TNTEntity): continue
+                bodies.append((float(i.pos[0]), float(i.pos[1]), float(i.pos[2]), 0.0, i.aabb(), tnthit(i)))
+        if items:
+            for i in list(items.items):
+                if not i.active: continue
+                bodies.append((float(i.pos[0]), float(i.pos[1]), float(i.pos[2]), 0.2125,
+                    (i.pos[0] - 0.125, i.pos[1], i.pos[2] - 0.125, i.pos[0] + 0.125, i.pos[1] + 0.25, i.pos[2] + 0.125),
+                    itemhit(i, items)))
+
+    if chunker: blast.affect(chunker, ex, ey, ez, power, bodies)
+
+
+def tnthit(i):
+    def hit(dmg, dx, dy, dz):
+        i.mx += dx;  i.my += dy;  i.mz += dz
+    return hit
+
+
+# EntityItem has 5 health
+def itemhit(i, items):
+    def hit(dmg, dx, dy, dz):
+        i.vel[0] += dx * 20.0;  i.vel[1] += dy * 20.0;  i.vel[2] += dz * 20.0
+        if dmg >= 5:
+            i.active = False
+            if i in items.items: items.items.remove(i)
+    return hit
+
+
+
+
 @regblockent(60)   # world.blocks.TNT = 60
 class TNTEntity(BlockEntity):
     def __init__(self, x, y, z, fuse=None, _remote=False, eid=None):
@@ -48,6 +146,14 @@ class TNTEntity(BlockEntity):
         # pos[1] = bottom of the 1x1x1 cube
         self.pos = np.array([x + 0.5, float(y), z + 0.5], dtype='f4')
         self.vy  = _INITIAL_VEL_Y
+
+        # EntityTNTPrimed: small random shove, up a bit. motion per tick
+        a = random.random() * math.pi * 2.0
+        self.mx = -math.sin(a) * 0.02
+        self.my = 0.2
+        self.mz = -math.cos(a) * 0.02
+        self.opos = self.pos.copy()
+        self.acc  = 0.0
         self.tpos = self.pos.copy()  # last pos the server sent
 
         self._on_ground   = False
@@ -81,35 +187,55 @@ class TNTEntity(BlockEntity):
 
 
     def update(self, dt, wc):
-        # t0 = time.perf_counter()
-        chunker = wc.get('chunker')
-        if chunker: self.applygrav(dt, chunker)
-
-        # server owned -> predict locally, ease onto the authoritative pos
+        # server owned -> ease onto the authoritative pos, it blows up when told
         if self.eid is not None:
+            self.opos[:] = self.pos
             self.pos += (self.tpos - self.pos) * min(1.0, 10.0 * dt)
-            self.x = int(math.floor(self.pos[0]))
-            self.y = int(math.floor(self.pos[1]))
-            self.z = int(math.floor(self.pos[2]))
+            self.fuse -= dt
+            self.acc = 0.0
+            return
 
-        intv = _FLASH_FAST if self.fuse <= 1.0 else _FLASH_SLOW
-        self._flash_timer += dt
-        if self._flash_timer >= intv:
-            self._flash_timer -= intv
-            self._flash_on = not self._flash_on
+        chunker = wc.get('chunker')
+        self.acc += dt
+        n = 0
+        while self.acc >= TICK and n < 5 and self.alive:
+            self.acc -= TICK
+            n += 1
+            self.step(chunker, wc)
 
-        self.fuse -= dt
-        # print(self.fuse)
-        # server owned ones blow up when it says so
-        if self.fuse <= 0.0 and self.eid is None: self.explode(wc)
 
+    # EntityTNTPrimed.onUpdate
+    def step(self, chunker, wc):
+        self.opos[:] = self.pos
+        self.my -= 0.04
+        v = np.array((self.mx, self.my, self.mz), dtype='f4')
+        fp, grnd, wall = motion.movebox(chunker, self.pos, v, 0.49, 0.98, 0.0, 1.0)
+        self.pos = fp
+        self.mx, self.my, self.mz = float(v[0]) * 0.98, float(v[1]) * 0.98, float(v[2]) * 0.98
+        if grnd:
+            self.mx *= 0.7;  self.mz *= 0.7;  self.my *= -0.5
+        self.x = int(math.floor(self.pos[0]))
+        self.y = int(math.floor(self.pos[1]))
+        self.z = int(math.floor(self.pos[2]))
+
+        self.fuse -= TICK
+        if self.fuse <= 1e-6:
+            self.explode(wc)
+            return
+
+
+    # RenderTNTPrimed: swells the last 10 ticks, white pulse every 5
     def render(self, mgr):
-        uvs = self.getuvs()
-        mgr.draw_cube(
-            (self.pos[0], self.pos[1] + 0.5, self.pos[2]),
-            uvs,
-            flash=self._flash_on,
-        )
+        a  = self.acc / TICK if self.eid is None else 1.0
+        p  = self.opos + (self.pos - self.opos) * a
+        ft = self.fuse / TICK - a + 1.0
+        sc = 1.0
+        if ft < 10.0:
+            f  = max(0.0, min(1.0, 1.0 - ft / 10.0))
+            sc = 1.0 + (f ** 4) * 0.3
+        fl = (1.0 - ft / 100.0) * 0.8 if int(self.fuse / TICK) // 5 % 2 == 0 else 0.0
+        mgr.draw_cube((p[0], p[1] + 0.5, p[2]), self.getuvs(), flash=max(0.0, fl), scale=sc)
+
 
     def applygrav(self, dt, chunker):
         bx = int(math.floor(self.pos[0]))
@@ -120,7 +246,7 @@ class TNTEntity(BlockEntity):
         if self._on_ground:
 
             sy = int(math.floor(self.pos[1])) - 1
-            if not chunker.issolid(bx, sy, bz):
+            if not chunker.iscollide(bx, sy, bz):
                 self._on_ground = False
                 self.vy = 0.0
 
@@ -137,7 +263,7 @@ class TNTEntity(BlockEntity):
 
         if self.vy < 0:
             fb = int(math.floor(ny - 0.001))
-            if chunker.issolid(bx, fb, bz):
+            if chunker.iscollide(bx, fb, bz):
                 self.pos[1]     = float(fb + 1)
                 self.vy         = 0.0
                 self._on_ground = True
@@ -148,7 +274,7 @@ class TNTEntity(BlockEntity):
 
         else:
             cb = int(math.floor(ny + 1.001))
-            if chunker.issolid(bx, cb, bz):
+            if chunker.iscollide(bx, cb, bz):
                 self.pos[1] = float(cb) - 1.0
                 self.vy = 0.0
 
@@ -164,90 +290,8 @@ class TNTEntity(BlockEntity):
 
     def explode(self, wc):
         self.alive = False
+        explodeat(wc, float(self.pos[0]), float(self.pos[1]) + 0.06125, float(self.pos[2]), 4.0, skip=self)
 
-        chunker    = wc.get('chunker')
-        pmgr  = wc.get('particles')
-        p     = wc.get('player')
-        nc    = wc.get('netclient')
-        bemgr = wc.get('blockentys')
-
-        ex = self.pos[0]
-        ey = self.pos[1] + 0.5
-        ez = self.pos[2]
-        cx = int(math.floor(ex))
-        cy = int(math.floor(ey))
-        cz = int(math.floor(ez))
-
-
-
-
-
-        from world.blocks import TNT as TNT_ID
-
-        # server authority for block destruction
-        if nc and nc.isconn():
-            # server does the block destruction, this is just the show
-            if chunker and pmgr:
-                for dx, dy, dz, dist in BLAST_OFF:
-                    if dist > BLAST_RADIUS * 0.6: continue
-                    bx, by, bz = cx + dx, cy + dy, cz + dz
-                    bt = chunker.getblock(bx, by, bz)
-                    if bt and bt != 0 and bt != TNT_ID:
-                        pmgr.spawn(bx, by, bz, bt)
-            if p: self.knockback(p, ex, ey, ez)
-            return
-
-
-        if chunker:
-            cpos = []
-            npos = []
-
-            for dx, dy, dz, dist in BLAST_OFF:
-                bx, by, bz = cx + dx, cy + dy, cz + dz
-                bt = chunker.getblock(bx, by, bz)
-
-                if not bt or bt == 0: continue
-
-                if bt == TNT_ID: cpos.append((bx, by, bz))
-                else:            npos.append((bx, by, bz, dist))
-
-            rm = chunker.batchbreak(
-                [(bx, by, bz) for bx, by, bz, _ in npos]
-            )
-
-
-            if pmgr:
-                for bx, by, bz, dist in npos:
-                    if dist <= BLAST_RADIUS * 0.6 and (bx, by, bz) in rm:
-                        pmgr.spawn(bx, by, bz, rm[(bx, by, bz)])
-
-
-            if bemgr is not None:
-                for bx, by, bz in cpos:
-                    chunker.breakblock(bx, by, bz)
-                    fuse = random.uniform(CHAIN_FUSE_MIN, CHAIN_FUSE_MAX)
-                    bemgr.activate(bx, by, bz, TNT_ID, fuse=fuse)
-
-
-            # chain other tnt
-            if bemgr is not None:
-                for i in bemgr.entities:
-                    if i is self or not i.alive: continue
-                    if not isinstance(i, TNTEntity): continue
-                    d = math.sqrt(
-                        (i.pos[0]-ex)**2 +
-                        (i.pos[1]+0.5-ey)**2 +
-                        (i.pos[2]-ez)**2
-                    )
-
-                    if d <= BLAST_RADIUS * 1.5:
-                        i.fuse = min(
-                            i.fuse,
-                            random.uniform(CHAIN_FUSE_MIN, CHAIN_FUSE_MAX)
-                        )
-
-
-        if p: self.knockback(p, ex, ey, ez)
 
     """
     def applygrav(self, dt, chunker):

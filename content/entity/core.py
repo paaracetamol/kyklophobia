@@ -10,6 +10,11 @@ KIND_TNT    = 1
 KIND_ITEM   = 2
 KIND_DUMMY  = 3
 KIND_ZOMBIE = 4
+KIND_CART   = 5
+KIND_CHESTCART   = 6
+KIND_FURNACECART = 7
+KIND_TNTCART     = 8
+KIND_HOPPERCART  = 9
 
 # anims
 ANIM_SWING = 1
@@ -20,6 +25,7 @@ REND_NONE   = 0
 REND_CUBE   = 1
 REND_SPRITE = 2
 REND_MODEL  = 3
+REND_CART   = 4
 
 
 TYPES = {} # kind -> EntityType
@@ -107,6 +113,7 @@ def kindnames():     return sorted(NAMES)
 
 class Entity:
     kind = 0
+    ownmove = False
 
     def __init__(self, eid=0, pos=None, yaw=0.0, pitch=0.0):
         self.eid   = eid # 0 = local only
@@ -142,8 +149,12 @@ class Entity:
         self.still    = False
         self.snt      = False
         self.frozen   = False
+        self.riding   = None   # cart
         self.tpos     = self.pos.copy()
 
+
+
+    def cbox(self): return self.aabb()
 
 
     # pos[1] = feet

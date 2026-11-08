@@ -36,9 +36,9 @@ def resolvtex(ref, textures):
 
 
 def faceuv8(nu1, nv1, nu2, nv2, rot=0):
-    if rot == 90:    return [nu1, 1-nv1, nu1, 1-nv2, nu2, 1-nv2, nu2, 1-nv1]
+    if rot == 90:    return [nu2, 1-nv2, nu2, 1-nv1, nu1, 1-nv1, nu1, 1-nv2]
     elif rot == 180: return [nu2, 1-nv1, nu1, 1-nv1, nu1, 1-nv2, nu2, 1-nv2]
-    elif rot == 270: return [nu2, 1-nv2, nu2, 1-nv1, nu1, 1-nv1, nu1, 1-nv2]
+    elif rot == 270: return [nu1, 1-nv1, nu1, 1-nv2, nu2, 1-nv2, nu2, 1-nv1]
     else:            return [nu1, 1-nv2, nu2, 1-nv2, nu2, 1-nv1, nu1, 1-nv1]
 
 

@@ -53,6 +53,7 @@ from world.blocks import (
     STONE_BUTTON, WOODEN_BUTTON,
     STONE_PRESSURE_PLATE, WOODEN_PRESSURE_PLATE, LIGHT_WEIGHTED_PRESSURE_PLATE, HEAVY_WEIGHTED_PRESSURE_PLATE,
     OAK_TRAPDOOR, IRON_TRAPDOOR,
+    PISTON, STICKY_PISTON, PISTON_HEAD, MOVING_PISTON, DISPENSER, DROPPER, OBSERVER, ACTIVATOR_RAIL, TRIPWIRE,
     LADDER,
     CHEST, TRAPPED_CHEST, ENDER_CHEST,
     CARPET_WHITE, CARPET_ORANGE, CARPET_MAGENTA, CARPET_LIGHT_BLUE,
@@ -113,6 +114,7 @@ CUSTOM_BLOCKS = {
     WATER_FLOWING: (MODE_TRANSPARENT, CUBE_ELEMS, UV_MODE_POS, False, None),
     CACTUS: (MODE_CUSTOM, CACTUS_ELEMS, CACTUS_UV, CACTUS_CULL, CACTUS_FUVS),
     BARRIER: (MODE_INVISIBLE, CUBE_ELEMS, UV_MODE_POS, False, None),
+    MOVING_PISTON: (MODE_INVISIBLE, CUBE_ELEMS, UV_MODE_POS, False, None),
     HOPPER: (MODE_CUSTOM, HOPPER_ELEMS, HOPPER_UV, HOPPER_CULL, HOPPER_FUVS),
     CAULDRON: (MODE_CUSTOM, CAULDRON_ELEMS, CAULDRON_UV, CAULDRON_CULL, CAULDRON_FUVS),
     CAKE: (MODE_CUSTOM, CAKE_ELEMS, CAKE_UV, CAKE_CULL, CAKE_FUVS),
@@ -780,6 +782,15 @@ for bid, tex in [
 
 
 
+# pistons, dispensers
+for bid, modelname in [(PISTON, "piston_normal"), (STICKY_PISTON, "sticky_piston"), (PISTON_HEAD, "piston_head_normal"), (DISPENSER, "dispenser"), (DROPPER, "dropper"), (OBSERVER, "observer")]:
+    m = modeljson(modelname)
+    if m:
+        elems, fuvs, ftex = m
+        CUSTOM_BLOCKS[bid] = (MODE_CUSTOM, elems, UV_MODE_MODEL, False, fuvs)
+        BLOCK_DATA[bid] = ftex
+
+
 # trapdoors
 m = modeljson("trapdoor_bottom", {"texture": "blocks/trapdoor"})
 if m:
@@ -826,8 +837,25 @@ if m:
 
 # TODO  - chesrts
 _chelems = [elemfaces([1, 0, 1], [15, 14, 15])]
-for bid in [CHEST, TRAPPED_CHEST, ENDER_CHEST]:
+for bid in [ENDER_CHEST]:
     CUSTOM_BLOCKS[bid] = (MODE_CUSTOM, _chelems, UV_MODE_IDX, False, None)
+
+
+_chuv = np.array([faceuv8(0.0, 0.0, 1.0, 1.0)] * 6, dtype=np.float32)
+_chcube = elemfaces([0, 0, 0], [16, 16, 16])
+
+def chesttex(f, front, back):
+    t = {i: "blocks/chest_side" for i in range(2, 6)}
+    t[0] = t[1] = "blocks/chest_top"
+    s = {0: 2, 1: 3, 2: 4, 3: 5}[f]
+    t[s] = front
+    t[{2: 3, 3: 2, 4: 5, 5: 4}[s]] = back
+
+    return np.array([atlasuv(t[i]) for i in range(6)], dtype=np.float32)
+
+for bid in (CHEST, TRAPPED_CHEST):
+    CUSTOM_BLOCKS[bid] = (MODE_CUSTOM, [_chcube], UV_MODE_MODEL, False, [_chuv])
+    BLOCK_DATA[bid] = [chesttex(1, "blocks/chest_front", "blocks/chest_side")]
 
 
 _ccols = [
@@ -937,8 +965,11 @@ for bid, (mode, elems, uv_mode, cull, fuvs) in CUSTOM_BLOCKS.items():
 BLOCK_TINT_COLOR[REDSTONE_WIRE] = [1.0, 0.0, 0.0]
 
 
-STATE_ELEM_OFF = np.zeros((MAX_CUSTOM, 32), dtype=np.int32)
-STATE_ELEM_NUM = np.zeros((MAX_CUSTOM, 32), dtype=np.int32)
+# col 0-31 = state, 32-63 = state of a locked repeater
+STATE_ELEM_OFF = np.zeros((MAX_CUSTOM, 64), dtype=np.int32)
+STATE_ELEM_NUM = np.zeros((MAX_CUSTOM, 64), dtype=np.int32)
+
+STATE_ROW = np.tile(np.arange(MAX_CUSTOM, dtype=np.int32)[:, None], (1, 64))
 
 
 
@@ -1058,7 +1089,7 @@ _rcurved = modeljson("normal_rail_curved")
 if _rcurved:
     _rcelems, _rcfuvs, _rcftex = _rcurved
     _rcturned = atlasuv("blocks/rail_normal_turned")
-    _cangles = [90, 180, 270, 0]  # NE, NW, SW, SE
+    _cangles = [270, 180, 90, 0]  # NE, NW, SW, SE, rail.json
     for _ci, _ca in enumerate(_cangles):
         _slot = 2 + _ci
         BLOCK_ELEMS[RAIL, _slot] = BLOCK_ELEMS[RAIL, 0].copy()
@@ -1154,6 +1185,375 @@ for _sbid in _sbids:
                 BLOCK_UVS[_sbid, _dslot] = _fuvs[_ei]
                 BLOCK_TEX[_sbid, _dslot] = _ftexs[_ei]
 
+
+
+
+_attrot = {
+    0: (0, 0), 1: (90, 180), 
+    2: (90, 0), 3: (90, 90), 
+    4: (90, 270), 5: (180, 0)
+}
+
+
+def attslots(i, base, slot, off=0, states=None):
+    _n = len(base[0])
+    for _a, (_xr, _yr) in _attrot.items():
+        for _ei in range(_n):
+            _e = base[0][_ei].copy()
+            if _xr: rotelem(_e, [8, 8, 8], "x", _xr)
+            if _yr: rotelem(_e, [8, 0, 8], "y", _yr)
+            _d = slot + _a * _n + _ei
+            BLOCK_ELEMS[i, _d] = _e
+            if base[1] and _ei < len(base[1]): BLOCK_UVS[i, _d] = base[1][_ei]
+            if base[2] and _ei < len(base[2]): BLOCK_TEX[i, _d] = base[2][_ei]
+        STATE_ELEM_OFF[i, _a + off] = slot + _a * _n
+
+
+_lv = {"base": "blocks/cobblestone", "lever": "blocks/lever"}
+_lvon, _lvoff = modeljson("lever", _lv), modeljson("lever_off", _lv)
+
+if _lvon and _lvoff:
+    attslots(LEVER, _lvoff, 0)
+    attslots(LEVER, _lvon, 6 * len(_lvoff[0]), off=8)
+
+
+
+for _bb, _bt in [(STONE_BUTTON, "blocks/stone"), (WOODEN_BUTTON, "blocks/planks_oak")]:
+    _bo, _bp = modeljson("button", {"texture": _bt}), modeljson("button_pressed", {"texture": _bt})
+    if _bo and _bp:
+        attslots(_bb, _bo, 0)
+        attslots(_bb, _bp, 6 * len(_bo[0]), off=8)
+
+
+for _tb, _tt in [(TORCH, "blocks/torch_on"), (REDSTONE_TORCH_ON, "blocks/redstone_torch_on"), (REDSTONE_TORCH_OFF, "blocks/redstone_torch_off")]:
+    _tf, _tw = modeljson("torch", {"torch": _tt}), modeljson("torch_wall", {"torch": _tt})
+    if _tf and _tw:
+        for _a, _yr in {1: 90, 2: 270, 3: 0, 4: 180}.items():
+
+            _n = len(_tf[0])
+            for _ei in range(_n):
+
+                _e = _tw[0][_ei].copy()
+                if _yr: rotelem(_e, [8, 0, 8], "y", _yr)
+
+                _d = _a * _n + _ei
+                BLOCK_ELEMS[_tb, _d] = _e
+                if _tw[1] and _ei < len(_tw[1]): BLOCK_UVS[_tb, _d] = _tw[1][_ei]
+                if _tw[2] and _ei < len(_tw[2]): BLOCK_TEX[_tb, _d] = _tw[2][_ei]
+
+            STATE_ELEM_OFF[_tb, _a] = _a * _n
+
+
+
+# model p state -> spare rows
+_rowfree = [MAX_CUSTOM - 1, 0]
+
+
+
+def reslot(e, uv, tx):
+    ne = np.zeros_like(e)
+    nu = None if uv is None else np.array(uv, dtype=np.float32).copy()
+    nt = None if tx is None else np.full_like(np.array(tx, dtype=np.float32), -1.0)
+
+    
+    for fi in range(6):
+        if e[fi].any():
+
+            n = np.cross(e[fi, 1] - e[fi, 0], e[fi, 2] - e[fi, 0])
+            if np.count_nonzero(np.abs(n) > 1e-5) > 1: return e, uv, tx
+
+
+
+    for fi in range(6):
+        if not e[fi].any(): continue
+        n  = np.cross(e[fi, 1] - e[fi, 0], e[fi, 2] - e[fi, 0])
+        if not (np.abs(n) > 1e-5).any(): continue   # zero area, would stomp a real slot
+        ax = int(np.argmax(np.abs(n)))
+
+        sl = {
+            (1, 1): 0, (1, -1): 1, 
+            (2, -1): 2, (2, 1): 3, 
+            (0, 1): 4, (0, -1): 5
+        }[(ax, 1 if n[ax] > 0 else -1)]
+
+        ne[sl] = e[fi]
+
+        if uv is not None: nu[sl] = uv[fi]
+        if tx is not None: nt[sl] = tx[fi]
+
+    return ne, nu, nt
+
+
+
+
+
+
+
+def statemodel(i, col, m, xr=0, yr=0):
+    _n = len(m[0])
+    if _rowfree[1] + _n > MAX_ELEMS:
+        _rowfree[0] -= 1
+        _rowfree[1] = 0
+
+
+    _row, _base = _rowfree[0], _rowfree[1]
+
+    for _ei in range(_n):
+        _e = m[0][_ei].copy()
+        if xr: rotelem(_e, [8, 8, 8], "x", xr)
+        if yr: rotelem(_e, [8, 8, 8], "y", yr)
+
+        _uv = m[1][_ei] if m[1] and _ei < len(m[1]) else None
+        _tx = m[2][_ei] if m[2] and _ei < len(m[2]) else None
+
+        if xr or yr: _e, _uv, _tx = reslot(_e, _uv, _tx)
+        BLOCK_ELEMS[_row, _base + _ei] = _e
+
+        if _uv is not None: BLOCK_UVS[_row, _base + _ei] = _uv
+        if _tx is not None: BLOCK_TEX[_row, _base + _ei] = _tx
+
+
+    STATE_ROW[i, col]      = _row
+    STATE_ELEM_OFF[i, col] = _base
+    STATE_ELEM_NUM[i, col] = _n
+    _rowfree[1] += _n
+
+
+
+
+
+def _vy(y): return (360 - y) % 360
+
+
+_FY  = {1: 0, 3: 90, 0: 180, 2: 270}
+_DY  = {2: 0, 1: 90, 3: 180, 0: 270}
+_TY  = {0: 0, 1: 180, 2: 90, 3: 270}
+_PXY = {0: (270, 0), 1: (90, 0), 2: (0, 0), 3: (0, 180), 4: (0, 270), 5: (0, 90)}
+
+
+
+def _mdl(nm):
+    m = modeljson(nm)
+    return m
+
+
+
+for _s in range(32):
+    _f, _d, _on = _s & 3, (_s >> 2) & 3, bool(_s & 16)
+    _p = "repeater_on_" if _on else "repeater_"
+
+    statemodel(REPEATER, _s,      _mdl(f"{_p}{_d + 1}tick"), yr=_vy(_FY[_f]))
+    statemodel(REPEATER, _s + 32, _mdl(f"{_p}locked_{_d + 1}tick"), yr=_vy(_FY[_f]))
+
+
+
+for _s in range(16):
+    _f, _sb, _on = _s & 3, bool(_s & 4), bool(_s & 8)
+    _nm = "comparator_" + ("lit" if _on else "unlit") + ("_subtract" if _sb else "")
+    statemodel(COMPARATOR, _s, _mdl(_nm), yr=_vy(_FY[_f]))
+
+
+
+for _bot, _top, _nm in [
+    (OAK_DOOR_BOTTOM,      OAK_DOOR_TOP,      "wooden_door"),
+    (SPRUCE_DOOR_BOTTOM,   SPRUCE_DOOR_TOP,   "spruce_door"),
+    (BIRCH_DOOR_BOTTOM,    BIRCH_DOOR_TOP,    "birch_door"),
+    (JUNGLE_DOOR_BOTTOM,   JUNGLE_DOOR_TOP,   "jungle_door"),
+    (ACACIA_DOOR_BOTTOM,   ACACIA_DOOR_TOP,   "acacia_door"),
+    (DARK_OAK_DOOR_BOTTOM, DARK_OAK_DOOR_TOP, "dark_oak_door"),
+    (IRON_DOOR_BOTTOM,     IRON_DOOR_TOP,     "iron_door"),
+]:
+    for _i, _half in ((_bot, "bottom"), (_top, "top")):
+        for _s in range(32):
+
+            _op, _rh = bool(_s & 4), bool(_s & 8)
+            _y = _DY[_s & 3]
+            if _op: _y += 270 if _rh else 90
+
+            statemodel(
+                _i, _s, _mdl(f"{_nm}_{_half}" + ("" if _rh == _op else "_rh")),
+                yr=_vy(_y % 360)
+            )
+
+
+
+
+
+for _i, _nm in ((OAK_TRAPDOOR, "wooden_trapdoor"), (IRON_TRAPDOOR, "iron_trapdoor")):
+    for _s in range(32):
+        
+        if _s & 4: statemodel(_i, _s, _mdl(f"{_nm}_open"), yr=_vy(_TY[_s & 3]))
+        else:      statemodel(_i, _s, _mdl(f"{_nm}_top" if _s & 8 else f"{_nm}_bottom"))
+
+
+# gate: ff, 4 open
+for _i, _nm in (
+    (OAK_FENCE_GATE, "oak"), (SPRUCE_FENCE_GATE, "spruce"), (BIRCH_FENCE_GATE, "birch"),
+    (JUNGLE_FENCE_GATE, "jungle"), (ACACIA_FENCE_GATE, "acacia"), (DARK_OAK_FENCE_GATE, "dark_oak"),
+):
+    for _s in range(32):
+        statemodel(
+            _i, _s, _mdl(f"{_nm}_fence_gate_" + ("open" if _s & 4 else "closed")), 
+            yr=_vy(_FY[_s & 3])
+        )
+
+
+
+
+for _s in range(16):
+    _x, _y = _PXY.get(_s & 7, (0, 0))
+    _yr = _vy(_y)
+
+    statemodel(PISTON, _s, _mdl("piston_extended_normal" if _s & 8 else "piston_normal"), xr=_x, yr=_yr)
+    statemodel(STICKY_PISTON, _s, _mdl("piston_extended_normal" if _s & 8 else "sticky_piston"), xr=_x, yr=_yr)
+    statemodel(PISTON_HEAD, _s, _mdl("piston_head_sticky" if _s & 8 else "piston_head_normal"), xr=_x, yr=_yr)
+    # 16: short shaf
+    statemodel(PISTON_HEAD, _s | 16, _mdl("piston_head_short_sticky" if _s & 8 else "piston_head_short_normal"), xr=_x, yr=_yr)
+
+
+
+
+for _i, _nm in ((DISPENSER, "dispenser"), (DROPPER, "dropper")):
+    for _s in range(16):
+        _f = _s & 7
+        if _f > 5: _f = 0
+
+        if _f < 2: statemodel(_i, _s, _mdl(f"{_nm}_vertical"), xr=(0 if _f == 1 else 180))
+        else:      statemodel(_i, _s, _mdl(_nm), yr=_vy(_PXY[_f][1]))
+
+
+
+
+
+for _s in range(16):
+    _f = _s & 7
+    if _f == 0 or _f == 1 or _f > 5: statemodel(HOPPER, _s, _mdl("hopper_down"))
+    else: statemodel(HOPPER, _s, _mdl("hopper_side"), yr=_vy(_PXY[_f][1]))
+
+
+
+for _s in range(16):
+    _f = _s & 7
+    if _f > 5: _f = 2
+    _x, _y = _PXY[_f]
+
+    statemodel(OBSERVER, _s, _mdl("observer_powered" if _s & 8 else "observer"), xr=_x, yr=_vy(_y))
+
+
+
+_rowfree[0] -= 1
+_ar = _rowfree[0]
+_rowfree[0] -= 1
+_rowfree[1] = 0
+
+BLOCK_ELEMS[_ar] = BLOCK_ELEMS[ACTIVATOR_RAIL]
+BLOCK_UVS[_ar]   = BLOCK_UVS[ACTIVATOR_RAIL]
+BLOCK_TEX[_ar]   = BLOCK_TEX[ACTIVATOR_RAIL]
+
+_arl = atlasuv("blocks/rail_activator_powered")
+_aro = atlasuv("blocks/rail_activator")
+_mask = np.isclose(BLOCK_TEX[_ar, :, :, 0], _aro[0]) & np.isclose(BLOCK_TEX[_ar, :, :, 1], _aro[1])
+
+BLOCK_TEX[_ar][_mask] = np.array(_arl, dtype=np.float32)
+for _s in range(8, 16): STATE_ROW[ACTIVATOR_RAIL, _s] = _ar
+
+
+
+_TW = {
+    0: ("ns", 0), 8: ("n", 0), 4: ("n", 180), 2: ("n", 90), 1: ("n", 270), 10: ("ne", 0), 6: ("ne", 90),
+    5: ("ne", 180), 9: ("ne", 270), 12: ("ns", 0), 3: ("ns", 90), 14: ("nse", 0), 7: ("nse", 90),
+    13: ("nse", 180), 11: ("nse", 270), 15: ("nsew", 0),
+}
+
+for _m, (_nm, _y) in _TW.items():
+    statemodel(TRIPWIRE, _m, _mdl(f"tripwire_{_nm}"), yr=_vy(_y))
+    statemodel(TRIPWIRE, _m + 16, _mdl(f"tripwire_attached_{_nm}"), yr=_vy(_y))
+
+
+
+
+for _s in range(32):
+    _row, _o, _n = STATE_ROW[TRIPWIRE, _s], STATE_ELEM_OFF[TRIPWIRE, _s], STATE_ELEM_NUM[TRIPWIRE, _s]
+
+    for _ei in range(_o, _o + _n):
+        for _fr, _to in ((0, 2), (1, 3)):
+
+            BLOCK_ELEMS[_row, _ei, _to] = BLOCK_ELEMS[_row, _ei, _fr][[1, 0, 5, 1, 5, 2]]
+            _u = BLOCK_UVS[_row, _ei, _fr]
+            BLOCK_UVS[_row, _ei, _to] = np.array([_u[2], _u[3], _u[0], _u[1], _u[6], _u[7], _u[4], _u[5]], dtype=np.float32)
+            BLOCK_TEX[_row, _ei, _to] = BLOCK_TEX[_row, _ei, _fr]
+
+BLOCK_MODE_RENDER[TRIPWIRE] = MODE_CUSTOM
+BLOCK_MODE_UV[TRIPWIRE]     = UV_MODE_MODEL
+
+
+
+for _s in range(16):
+    _nm = "tripwire_hook" + ("_attached" if _s & 4 else "") + ("_powered" if _s & 8 else "")
+    statemodel(TRIPWIRE_HOOK, _s, _mdl(_nm), yr=_vy({0: 0, 1: 180, 2: 90, 3: 270}[_s & 3]))
+
+
+
+
+for _i in (CHEST, TRAPPED_CHEST):
+    for _f in range(4):
+        statemodel(_i, _f,     ([_chcube], [_chuv], [chesttex(_f, "blocks/chest_front", "blocks/chest_side")]))
+        statemodel(_i, _f + 4, ([_chcube], [_chuv], [chesttex(_f, "blocks/chest_dfl", "blocks/chest_side")]))
+        statemodel(_i, _f + 8, ([_chcube], [_chuv], [chesttex(_f, "blocks/chest_dfr", "blocks/chest_side")]))
+
+
+# NS, EW, asc E W N S, curves SE SW NW NE
+_RS = {0: ("flat", 0), 1: ("flat", 90), 2: ("raised_ne", 90), 3: ("raised_sw", 90), 4: ("raised_ne", 0), 5: ("raised_sw", 0)}
+_RC = {6: 0, 7: 90, 8: 180, 9: 270}
+
+for _s, (_nm, _y) in _RS.items():
+
+    for _i, _base in (
+        (RAIL, "normal_rail"), (POWERED_RAIL, "golden_rail"), (POWERED_RAIL_ON, "golden_rail_active"),
+        (DETECTOR_RAIL, "detector_rail"), (ACTIVATOR_RAIL, "activator_rail"),
+    ):
+        statemodel(_i, _s, _mdl(f"{_base}_{_nm}"), yr=_vy(_y))
+
+    statemodel(DETECTOR_RAIL, _s + 16, _mdl(f"detector_rail_powered_{_nm}"), yr=_vy(_y))
+    statemodel(ACTIVATOR_RAIL, _s + 16, _mdl(f"activator_rail_active_{_nm}"), yr=_vy(_y))
+
+for _s, _y in _RC.items():
+    statemodel(RAIL, _s, _mdl("normal_rail_curved"), yr=_vy(_y))
+
+
+
+
+
+for _i, _nm in (
+    (STONE_PRESSURE_PLATE, "stone_pressure_plate"), (WOODEN_PRESSURE_PLATE, "wooden_pressure_plate"),
+    (LIGHT_WEIGHTED_PRESSURE_PLATE, "light_pressure_plate"), (HEAVY_WEIGHTED_PRESSURE_PLATE, "heavy_pressure_plate"),
+):
+    for _s in range(32):
+        statemodel(_i, _s, _mdl(f"{_nm}_down" if _s else f"{_nm}_up"))
+
+
+
+
+_rdl = atlasuv("blocks/redstone_dust_line0")
+_e = 0.25 / 16.0
+for _ei, _q in {
+    16: ((0, 0, _e),     (1, 0, _e),     (1, 1, _e),     (0, 1, _e)),
+    17: ((1, 0, 1 - _e), (0, 0, 1 - _e), (0, 1, 1 - _e), (1, 1, 1 - _e)),
+    18: ((1 - _e, 0, 0), (1 - _e, 0, 1), (1 - _e, 1, 1), (1 - _e, 1, 0)),
+    19: ((_e, 0, 1),     (_e, 0, 0),     (_e, 1, 0),     (_e, 1, 1)),
+}.items():
+    _a, _b, _c, _d = [np.array(_v, dtype=np.float32) for _v in _q]
+    BLOCK_ELEMS[REDSTONE_WIRE, _ei, 0] = np.stack([_a, _b, _c, _a, _c, _d])
+    BLOCK_ELEMS[REDSTONE_WIRE, _ei, 1] = np.stack([_b, _a, _d, _b, _d, _c])
+    for _fi in (0, 1):
+        BLOCK_UVS[REDSTONE_WIRE, _ei, _fi] = np.array(faceuv8(0.0, 0.0, 1.0, 1.0, 90), dtype=np.float32)
+        BLOCK_TEX[REDSTONE_WIRE, _ei, _fi] = np.array(_rdl, dtype=np.float32)
+
+
+
+
+
+
 # repeater & comparator : 4 hor ori
 # state=0 FACE_N stored (look S) -> S -> 180
 # state=1 FACE_S stored (look N) -> N -> 0
@@ -1187,7 +1587,6 @@ for _rbid, _rmcnm, _rtx in [
     
     for _facing, _angle in _frot.items():
         _bslot = _facing * _nr
-        STATE_ELEM_OFF[_rbid, _facing] = _bslot
         for _ei in range(_nr):
             _dslot = _bslot + _ei
             if _dslot >= MAX_ELEMS:
@@ -1198,6 +1597,7 @@ for _rbid, _rmcnm, _rtx in [
             BLOCK_ELEMS[_rbid, _dslot] = _relem
             if _rfuvs and _ei < len(_rfuvs): BLOCK_UVS[_rbid, _dslot] = _rfuvs[_ei]
             if _rftex and _ei < len(_rftex): BLOCK_TEX[_rbid, _dslot] = _rftex[_ei]
+
 
 BLOCK_CUSTOM_FACES = BLOCK_ELEMS[:, 0, :, :, :]
 BLOCK_STATE_HEIGHT = np.zeros(MAX_CUSTOM, dtype=np.bool_)

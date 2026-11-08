@@ -57,7 +57,7 @@ python launch.py
 ```
 python3.11 server.py --host 0.0.0.0 --port 25250 \
                      --world default --seed 12345 \
-                     --max-players 20 
+                     --type default --max-players 20 
 ```
 
 
@@ -249,6 +249,7 @@ commands (`content/commands/`) run `CommandManager` on both client and server, w
 
 ```
 saves/<world>/
+  world.json         seed + type (default|flat), set once on create
   <cx>_<cz>.pkl      mods for chunk(cx,cz)
   <cx>_<cz>.ent      entity for chunk(cx,cz)
   players/           token
@@ -294,3 +295,9 @@ VERTEX_BUFF_CAP_SZ  = 1_500_000  # float cap p vert buff
 ## license
 
 Public domain project. feel free to change, fork and republish it, give credit.
+
+
+## credits
+
+Default pack: block and item art from [Kova](https://www.curseforge.com/minecraft/texture-packs/kova) by kovaszos_uborka, distributed with permission.
+Minecraft Classic pack, and the rest of the default pack (ui, models, animations): textures by Mojang.

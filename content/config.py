@@ -1,4 +1,25 @@
+import json, os
+
 root = None
+
+
+def worldmeta(wname, seed=None, wtype=None):
+    wd = os.path.join(root, wname)
+    fp = os.path.join(wd, "world.json")
+    if os.path.exists(fp):
+        with open(fp) as f: m = json.load(f)
+        return m["seed"], m["type"]
+
+
+    os.makedirs(wd, exist_ok=True)
+    m = {"seed": SEED if seed is None else seed, "type": wtype or "default"}
+    with open(fp, 'w') as f: json.dump(m, f)
+    return m["seed"], m["type"]
+
+
+# redstone ready, bottom up (n, block id)
+FLAT_LAYERS       = ((1, 4), (3, 3), (52, 14))
+FLAT_SPAWN        = 57.0
 
 
 CHUNK_SZ          = 16
@@ -113,7 +134,7 @@ SPRINT_TRIG       = 7            # double tap window
 FOOD_SPRINT       = 6
 JUMP_TRIG         = 7            # double tap window
 NOJUMP_DELAY      = 10
-PUSHOUT           = 0.1
+#PUSHOUT           = 0.1
 
 
 # old model

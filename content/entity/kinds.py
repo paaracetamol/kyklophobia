@@ -1,4 +1,9 @@
-from config import DROP_F, DROP_LIFETIME, DROP_PICKUP_DELAY, ENT_STEP
+import math
+import random
+import numpy as np
+
+from config import DROP_F, DROP_LIFETIME, DROP_PICKUP_DELAY, ENT_STEP, TICK
+from entity import motion
 from entity.core import (
     Entity, regentity,
     KIND_TNT, KIND_ITEM, KIND_DUMMY, KIND_ZOMBIE,
@@ -14,9 +19,36 @@ TNT_FUSE = 4.0
 
 @regentity(KIND_TNT, "tnt", w=0.98, h=0.98, rend=REND_CUBE, pin=True)
 class TNTEnt(Entity):
+    ownmove = True
+
     def __init__(self, eid=0, pos=None, fuse=TNT_FUSE, **kw):
         super().__init__(eid=eid, pos=pos, **kw)
         self.fuse = fuse
+        
+        
+        a = random.random() * math.pi * 2.0
+        self.mx = -math.sin(a) * 0.02
+        self.my = 0.2
+        self.mz = -math.cos(a) * 0.02
+        self.acc = 0.0
+
+
+    
+
+    def think(self, dt, w):
+        self.acc += dt
+        n = 0
+        while self.acc >= TICK and n < 5:
+            self.acc -= TICK
+            n += 1
+            self.my -= 0.04
+            v = np.array((self.mx, self.my, self.mz), dtype='f4')
+            fp, grnd, wall = motion.movebox(w.chunker, self.pos, v, 0.49, 0.98, 0.0, 1.0)
+            self.pos = fp
+            self.mx, self.my, self.mz = float(v[0]) * 0.98, float(v[1]) * 0.98, float(v[2]) * 0.98
+            if grnd:
+                self.mx *= 0.7;  self.mz *= 0.7;  self.my *= -0.5
+        self.vel[:] = (self.mx / TICK, self.my / TICK, self.mz / TICK)
 
 
     def tick(self, dt, w):
@@ -95,3 +127,7 @@ class ZombieEnt(Entity):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.ai = Controller([Melee(), Wander(), LookAt()])
+
+
+
+import entity.minecart  # noqa: F401, registers itself

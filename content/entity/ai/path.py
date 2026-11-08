@@ -23,13 +23,13 @@ DIAGS = ((1, 1), (1, -1), (-1, 1), (-1, -1))
 
 def clearcol(ck, x, y, z, hb):
     for i in range(hb):
-        if ck.issolid(x, y + i, z): return False
+        if ck.iscollide(x, y + i, z): return False
     return True
 
 
 
 def standable(ck, x, y, z, hb):
-    return ck.issolid(x, y - 1, z) and clearcol(ck, x, y, z, hb)
+    return ck.iscollide(x, y - 1, z) and clearcol(ck, x, y, z, hb)
 
 
 
@@ -61,7 +61,7 @@ def steps(ck, n, hb, out=[]):
                 if clearcol(ck, nx, ny, nz, y - ny + hb):
                     out.append(((nx, ny, nz), STEPCOST + d * DROPCOST))
                 break
-            if ck.issolid(nx, ny, nz): break
+            if ck.iscollide(nx, ny, nz): break
 
 
 

@@ -30,7 +30,7 @@ from world.renderers.registry import (
     BLOCK_TINT_COLOR, MODE_FLAT, BLOCK_UVS, BLOCK_TEX,
     CONNECT_TYPE, CONNECT_FAMILY, BLOCK_ARM_NUM,
     BLOCK_ARM_ELEM, BLOCK_ARM_FUVS, BLOCK_ARM_FTEX,
-    STATE_ELEM_OFF, STATE_ELEM_NUM,
+    STATE_ELEM_OFF, STATE_ELEM_NUM, STATE_ROW,
 )
 
 
@@ -66,6 +66,7 @@ from world.noise import (
     BIOME_JUNGLE, BIOME_BADLANDS, BIOME_FOREST, BIOME_NAMES,
 )
 from world.generate import _generate
+from world.redstone import Redstone, NOCOLLIDE, OPENABLE, OPEN_BIT
 from world.mesh import (
     bakelight, build_meshjit, BLOCK_EMIT,
     is_localsolid, get_localblock, is_localwater,
@@ -129,7 +130,8 @@ def warmup_jit_functions():
         BLOCK_ARM_NUM, BLOCK_ARM_ELEM,
         BLOCK_ARM_FUVS, BLOCK_ARM_FTEX,
         STATE_ELEM_OFF,
-        STATE_ELEM_NUM
+        STATE_ELEM_NUM,
+        STATE_ROW
     )
     
     
@@ -175,6 +177,7 @@ class ChunkManager:
         self.chunks = {}
         self.queue_chunkbuild = deque()
         self.queue_meshupload = Queue()
+        self.rs = Redstone(self)
         self.last_camera_chunk = None
         self.world_dir = os.path.join(config.root, wname)
         self.chunks_dir = self.world_dir
@@ -215,6 +218,7 @@ class ChunkManager:
         
 
     def resetworld(self):
+        self.rs.reset()
         self.queue_chunkbuild.clear()
         self.mesh_build_queue.clear()
         
@@ -554,7 +558,9 @@ class ChunkManager:
             keep = False
             for ccx, ccz in centers:
                 if (cx - ccx)**2 + (cz - ccz)**2 <= ulsq:
-                    keep = True; break
+                    keep = True
+                    break
+
             if not keep: rm.append((cx, cz))
 
         for k in rm:
@@ -618,6 +624,26 @@ class ChunkManager:
     
     
     
+    def blocked(self, x0, y0, z0, x1, y1, z1):
+        return self.rs.blocked(x0, y0, z0, x1, y1, z1)
+
+
+    
+    def iscollide(self, x, y, z):
+        if y < 0 or y >= CHUNK_H: return False
+
+        c = self.chunks.get((x // CHUNK_SZ, z // CHUNK_SZ))
+        if not c: return False
+
+        v = int(c.voxels[x - c.offset_x, y, z - c.offset_z])
+        b = v & 0x3FF
+
+        if b in NONSOLID_BLOCKS or b in NOCOLLIDE: return False
+
+        return not (b in OPENABLE and (v >> 10) & OPEN_BIT)
+
+
+
     def issolid(self, x, y, z):
         if y < 0 or y >= CHUNK_H: return False
         c = self.chunks.get((x // CHUNK_SZ, z // CHUNK_SZ))
@@ -861,8 +887,10 @@ class ChunkManager:
         
         lx, lz = x - c.offset_x, z - c.offset_z
         if 0 <= lx < CHUNK_SZ and 0 <= lz < CHUNK_SZ:
+            old = c.voxels[lx, y, lz]
             c.voxels[lx, y, lz] = bt
             self.recordmod(cx, cz, lx, y, lz, bt)
+            self.rs.onset(x, y, z, old, bt)
             if self.headless: return True   # no light/mesh needed
 
             c.bakelight()
@@ -875,23 +903,27 @@ class ChunkManager:
             if lx == 0:
                 n = self.chunks.get((cx - 1, cz))
                 if n and n.gen_ready:
-                    rbld.append(n); nlit.append(n)
+                    rbld.append(n)
+                    nlit.append(n)
                     
             elif lx == CHUNK_SZ - 1:
                 n = self.chunks.get((cx + 1, cz))
                 if n and n.gen_ready:
-                    rbld.append(n); nlit.append(n)
+                    rbld.append(n)
+                    nlit.append(n)
                     
 
             if lz == 0:
                 n = self.chunks.get((cx, cz - 1))
                 if n and n.gen_ready:
-                    rbld.append(n); nlit.append(n)
+                    rbld.append(n)
+                    nlit.append(n)
                     
             elif lz == CHUNK_SZ - 1:
                 n = self.chunks.get((cx, cz + 1))
                 if n and n.gen_ready:
-                    rbld.append(n); nlit.append(n)
+                    rbld.append(n)
+                    nlit.append(n)
                     
 
             for n in nlit:
@@ -921,7 +953,7 @@ class ChunkManager:
         if n and n.gen_ready: touch[(cx, cz)] = n
 
 
-    def setblocks(self, chgs):
+    def setblocks(self, chgs, _rs=True):
         # batch, relight+rebuild each chunk once instead of once per block
         touch = {}
         miss  = []
@@ -937,6 +969,8 @@ class ChunkManager:
             if not (0 <= lx < CHUNK_SZ and 0 <= lz < CHUNK_SZ):
                 miss.append((x, y, z, bt)); continue
 
+            if _rs: self.rs.onset(x, y, z, c.voxels[lx, y, lz], bt)
+            
             c.voxels[lx, y, lz] = bt
             self.recordmod(cx, cz, lx, y, lz, bt)
             touch[(cx, cz)] = c
@@ -998,6 +1032,7 @@ class ChunkManager:
                 continue
                 
 
+            self.rs.onset(x, y, z, old, 0)
             c.voxels[lx, y, lz] = 0
             rm[(x, y, z)] = old
             self.recordmod(cx, cz, lx, y, lz, 0)
@@ -1169,6 +1204,8 @@ class ChunkManager:
         
     
     def shutdown(self):
+        self.rs.tiles.save()
+        self.rs.savesched()
         if self.is_server:
             
             for cx, cz in list(self.dirtychunks):

@@ -3,7 +3,7 @@ import math
 from config import (
     P_W, P_H, P_EYE_H, P_EYE_F,
     GRAV, DRAG_Y, FRIC_AIR, FRIC_TILE, FRIC_ICE, FRIC_SLIME,
-    ACC_BASE, AIR_ACC, AIR_SPRINT, STEP_H, PUSHOUT,
+    ACC_BASE, AIR_ACC, AIR_SPRINT, STEP_H,
     WATER_ACC, WATER_DRAG, WATER_GRAV, LAVA_DRAG,
     LADDER_CLAMP,
     GRAVITY, TERM_V, JUMP_V,
@@ -68,6 +68,11 @@ class PhysicsEngine:
 
 
 
+    def blockedat(self, x, y, z):
+        return self.world.iscollide(int(flr(x)), int(flr(y)), int(flr(z)))
+
+
+
     def collidingblocks(self, aabb, result=[]):
         result = []
         x0 = int(flr(aabb.min[0])); x1 = int(cl(aabb.max[0]))
@@ -76,7 +81,7 @@ class PhysicsEngine:
         for x in range(x0, x1):
             for y in range(y0, y1):
                 for z in range(z0, z1):
-                    if self.isblocksolid(x, y, z):
+                    if self.world.iscollide(x, y, z):
                         ba = AABB([x, y, z], [x+1, y+1, z+1])
                         if aabb.intersects(ba):
                             result.append((x, y, z, ba))
@@ -98,25 +103,7 @@ class PhysicsEngine:
 
 
 
-        is_solid = self.world.issolid  # cache
-        m  = 0.001
-        sx = int(flr(mnx - m)); ex = int(cl(mxx + m))
-        sy = int(flr(mny - m)); ey = int(cl(mxy + m))
-        sz = int(flr(mnz - m)); ez = int(cl(mxz + m))
-        #print(sx, ex, sy, ey, sz, ez)
-
-        for x in range(sx, ex):
-            for y in range(sy, ey):
-                for z in range(sz, ez):
-                    if is_solid(x, y, z):
-                        if (mnx < x+1 and mxx > x and
-                            mny < y+1 and mxy > y and
-                            mnz < z+1 and mxz > z):
-                            return False
-                        
-        return True
-    
-
+        return not self.world.blocked(mnx, mny, mnz, mxx, mxy, mxz)
 
 
 
@@ -360,44 +347,7 @@ class PhysicsEngine:
 
 
     
-    def pushout(self, pos, vel):
-        hw = self.pw * 0.35
-        for cx, cz in ((-hw, hw), (-hw, -hw), (hw, -hw), (hw, hw)):
-            x  = pos[0] + cx
-            y  = pos[1] + 0.5
-            z  = pos[2] + cz
-            xt = int(flr(x)); yt = int(flr(y)); zt = int(flr(z))
-            xd = x - xt
-            zd = z - zt
 
-            if not (self.isblocksolid(xt, yt, zt) or self.isblocksolid(xt, yt + 1, zt)):
-                continue
-
-            west  = not self.isblocksolid(xt-1, yt, zt) and not self.isblocksolid(xt-1, yt+1, zt)
-            east  = not self.isblocksolid(xt+1, yt, zt) and not self.isblocksolid(xt+1, yt+1, zt)
-            north = not self.isblocksolid(xt, yt, zt-1) and not self.isblocksolid(xt, yt+1, zt-1)
-            south = not self.isblocksolid(xt, yt, zt+1) and not self.isblocksolid(xt, yt+1, zt+1)
-
-
-
-            dir     = -1
-            closest = 9999.0
-            if west and xd < closest:
-                closest = xd;      dir = 0
-            if east and 1 - xd < closest:
-                closest = 1 - xd;  dir = 1
-            if north and zd < closest:
-                closest = zd;      dir = 4
-            if south and 1 - zd < closest:
-                closest = 1 - zd;  dir = 5
-
-
-            if dir == 0: vel[0] = -PUSHOUT
-            if dir == 1: vel[0] = +PUSHOUT
-            if dir == 4: vel[2] = -PUSHOUT
-            if dir == 5: vel[2] = +PUSHOUT
-
-        return vel
 
 
 """

@@ -577,6 +577,7 @@ def regblocks():
     pistons = [
         (blocks.PISTON, "Piston"),
         (blocks.STICKY_PISTON, "Sticky Piston"),
+        (blocks.OBSERVER, "Observer"),
     ]
 
     for bid, nm in pistons:
@@ -1043,6 +1044,12 @@ def regitems():
         T.BARRIER, "Barrier", category=MISC, is_block=False,
         max_stack=64, texture_uv=T.getuv(T.BARRIER), atlas="items",
         places_block=blocks.BARRIER
+    )
+
+    R.register(
+        T.STRING, "String", category=MATERIALS, is_block=False,
+        max_stack=64, texture_uv=T.getuv(T.STRING), atlas="items",
+        places_block=blocks.TRIPWIRE
     )
 
     R.register(

@@ -1,4 +1,6 @@
 ﻿import os
+import struct
+from network.protocol import mkcartuse, mkcartplace, mkcartride, mkcartinput, mkcontopen, mkcontclose, mkcontset, parsecontdata
 import socket
 import threading
 import time
@@ -72,6 +74,13 @@ class NetworkClient:
         self.on_playerjoin  = None
         self.on_playerleft  = None
         self.on_update      = None
+        self.on_piston      = None
+        self.on_contdata    = None
+        self.on_sun         = None
+        self.on_cartkick    = None
+        self.on_cartlit     = None
+        self.on_cartboom    = None
+        self.on_note        = None
         self.on_entspawn    = None
         #self.on_entpos      = None
         self.on_entstate    = None
@@ -200,8 +209,10 @@ class NetworkClient:
 
         if self.lpos is not None:
             pchg = np.linalg.norm(pos - self.lpos) >= self.pct
-            yd = abs(yaw - self.lyaw);     yd = 360 - yd if yd > 180 else yd
-            pd = abs(pitch - self.lpitch); pd = 360 - pd if pd > 180 else pd
+            yd = abs(yaw - self.lyaw)
+            yd = 360 - yd if yd > 180 else yd
+            pd = abs(pitch - self.lpitch)
+            pd = 360 - pd if pd > 180 else pd
             rchg = yd >= self.rct or pd >= self.rct
             
 
@@ -236,6 +247,15 @@ class NetworkClient:
         with self.wlock:
             try: self.sock.sendall(msg)
             except Exception: self.drop()
+
+
+    def sendcartplace(self, x, y, z, kd):  self.wsend(mkcartplace(x, y, z, kd))
+    def sendcartuse(self, eid, coal):      self.wsend(mkcartuse(eid, coal))
+    def sendcartride(self, eid):           self.wsend(mkcartride(eid))
+    def sendcartinput(self, fw, yaw):      self.wsend(mkcartinput(fw, yaw))
+    def sendcontopen(self, x, y, z):       self.wsend(mkcontopen(x, y, z))
+    def sendcontclose(self, x, y, z):      self.wsend(mkcontclose(x, y, z))
+    def sendcontset(self, x, y, z, i, st): self.wsend(mkcontset(x, y, z, i, st))
 
 
     def sendchange(self, x, y, z, bt):
@@ -357,11 +377,14 @@ class NetworkClient:
                         now  = time.time()
                         dt   = now - p.pstime
                         p.velocity = np.clip((pos - p.tpos) / dt, -1000.0, 1000.0) if dt > 0.001 else np.zeros(3, dtype='f4')
-                        p.pstime = p.stime; p.stime  = now
+                        p.pstime = p.stime
+                        p.stime  = now
                         p.ppos   = p.tpos.copy()
-                        p.pyaw   = p.tyaw; p.ppitch = p.tpitch
+                        p.pyaw   = p.tyaw
+                        p.ppitch = p.tpitch
                         p.tpos   = pos.copy()
-                        p.tyaw   = yaw;      p.tpitch = pitch
+                        p.tyaw   = yaw
+                        p.tpitch = pitch
                         p._held  = _held
 
                         
@@ -443,6 +466,36 @@ class NetworkClient:
                 elif mt == MessageType.ENTITY_DBG:
                     eid, nav, txt = self.reader.parse_entdbg(data)
                     if self.on_entdbg: self.on_entdbg(eid, nav, txt)
+
+
+                elif mt == MessageType.PISTON_MOVE:
+                    x, y, z, v, f, fl = struct.unpack('<iiiHBB', data[1:])
+                    if self.on_piston: self.on_piston(x, y, z, v, f, bool(fl & 1), bool(fl & 2), bool(fl & 4))
+
+
+                elif mt == MessageType.CART_KICK:
+                    if self.on_cartkick: self.on_cartkick()
+
+
+                elif mt == MessageType.CART_LIT:
+                    if self.on_cartlit: self.on_cartlit(*struct.unpack('<IB', data[1:]))
+
+
+                elif mt == MessageType.CART_BOOM:
+                    if self.on_cartboom: self.on_cartboom(*struct.unpack('<4fB', data[1:]))
+
+
+                elif mt == MessageType.SUN_ANGLE:
+                    if self.on_sun: self.on_sun(struct.unpack('<f', data[1:])[0])
+
+
+                elif mt == MessageType.NOTE_PLAY:
+                    if self.on_note: self.on_note(*struct.unpack('<iiiB', data[1:]))
+
+
+                elif mt == MessageType.CONT_DATA:
+                    x, y, z, snap = parsecontdata(data)
+                    if self.on_contdata: self.on_contdata(x, y, z, snap)
 
 
                 elif mt == MessageType.BLOCK_BULK:
@@ -617,7 +670,8 @@ class NetworkClient:
             step = (j.pos - j.apos) / n
             for _ in range(n):
                 ap = j.apos + step
-                j.anim.tick(ap[0], ap[2], j.apos[0], j.apos[2], j.yaw)
+                if j.aflags & 4: j.anim.tick(ap[0], ap[2], ap[0], ap[2], j.yaw)
+                else:            j.anim.tick(ap[0], ap[2], j.apos[0], j.apos[2], j.yaw)
                 j.apos = ap
 
         j.pose = j.anim.pose(j.accum / TICK, j.pitch, bool(j.aflags & 2))

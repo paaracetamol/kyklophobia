@@ -22,6 +22,7 @@ class Particle:
         self.uvoff   = (0.0, 0.0)
         self.gravity = -9.8
         self.tint    = (1.0, 1.0, 1.0)
+        self.quad    = None   # whole-tile uvs, see spawnnote
 
 
 class ParticleManager:
@@ -128,6 +129,7 @@ class ParticleManager:
             #print(self.acount, self.pidx)
 
             p.active  = True
+            p.quad    = None
             p.pos[0]  = x + 0.5 + (random.random() - 0.5) * 0.8
             p.pos[1]  = y + 0.5 + (random.random() - 0.5) * 0.8
             p.pos[2]  = z + 0.5 + (random.random() - 0.5) * 0.8
@@ -163,6 +165,42 @@ class ParticleManager:
             
             
 
+    # particle note
+    # x+0.5, y+1.2, z+0.5, 6 ticks
+    def spawnnote(self, x, y, z, note):
+        from world.blocks import TEXTURES, UV_W, UV_H
+        p = self.particles[self.pidx]
+        if not p.active: self.acount += 1
+
+        f = note / 24.0
+        p.active  = True
+        p.pos[:]  = (x + 0.5, y + 1.2, z + 0.5)
+        p.vel[:]  = (0.0, 2.0, 0.0)
+        p.life    = 0.3
+        p.maxlife = 0.3
+        p.size    = 0.4
+        p.gravity = 0.0
+
+        p.tint    = (
+            math.sin(f * 6.2831855) * 0.65 + 0.35,
+            math.sin((f + 0.33333334) * 6.2831855) * 0.65 + 0.35,
+            math.sin((f + 0.6666667)  * 6.2831855) * 0.65 + 0.35,
+        )
+
+        c, r = TEXTURES["note_particle"]
+        u0, v0 = c * UV_W, 1.0 - (r + 1) * UV_H
+        u1, v1 = u0 + UV_W, v0 + UV_H
+
+        p.quad = (
+            (u0, v0), (u1, v0), 
+            (u1, v1), (u0, v0), 
+            (u1, v1), (u0, v1)
+        )
+        self.pidx = (self.pidx + 1) % self.maxp
+
+        
+
+
     def update(self, dt):
         for i in self.particles:
             if not i.active: continue
@@ -195,9 +233,14 @@ class ParticleManager:
                 b = vi * self.vsz
                 self.vertdata[b:b+3]   = i.pos
                 self.vertdata[b+3:b+5] = self.quadoffs[j]
-                self.vertdata[b+5]     = i.uvoff[0] + self.quaduvs[j, 0]
-                self.vertdata[b+6]     = i.uvoff[1] + self.quaduvs[j, 1]
-                self.vertdata[b+7]     = alpha
+                if i.quad is None:
+                    self.vertdata[b+5] = i.uvoff[0] + self.quaduvs[j, 0]
+                    self.vertdata[b+6] = i.uvoff[1] + self.quaduvs[j, 1]
+                    self.vertdata[b+7] = alpha
+                else:
+                    self.vertdata[b+5] = i.quad[j][0]
+                    self.vertdata[b+6] = i.quad[j][1]
+                    self.vertdata[b+7] = 1.0
                 self.vertdata[b+8]     = i.size
                 self.vertdata[b+9:b+12] = i.tint
                 vi += 1

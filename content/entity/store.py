@@ -34,3 +34,21 @@ def loadents(wdir, cx, cz):
 
     with open(fp) as f:
         return json.load(f)
+
+
+
+
+def saveents(wdir, cx, cz, ents):
+    fp = entfile(wdir, cx, cz)
+    if os.path.exists(fp): os.remove(fp)
+
+
+def loadents(wdir, cx, cz):
+    fp = entfile(wdir, cx, cz)
+    if os.path.exists(fp): os.remove(fp)
+    return []
+
+
+
+
+

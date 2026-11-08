@@ -72,6 +72,7 @@ class UIManager:
 
         self.inv_model = None
         self.invbrwser = ItemBrowser()
+        self.conttex   = {}
         
         
         
@@ -115,7 +116,7 @@ class UIManager:
             self, stats, 
             nametags=None, keybinds=None, renderinv=False, 
             inv=None, pmodel=None, chat_input=None,
-            tablist=None
+            tablist=None, cont=None
     ):
         
         self.surface.fill((0, 0, 0, 0))
@@ -248,7 +249,13 @@ class UIManager:
         
         
 
-        if renderinv:
+        if renderinv and cont:
+            dim = pygame.Surface(self.screen_sz, pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 150))
+            self.surface.blit(dim, (0, 0))
+            self.rendcont(cont, inv)
+
+        elif renderinv:
             dim = pygame.Surface(self.screen_sz, pygame.SRCALPHA)
             dim.fill((0, 0, 0, 150))
             self.surface.blit(dim, (0, 0))
@@ -320,6 +327,48 @@ class UIManager:
             
             
             
+
+    def contpos(self, cont):
+        scale = SCL_HUD
+        return (self.screen_sz[0] - cont.w * scale) // 2, (self.screen_sz[1] - cont.h * scale) // 2, scale
+
+
+    def rendcont(self, cont, inv):
+        ix, iy, scale = self.contpos(cont)
+        if cont.tex not in self.conttex:
+            self.conttex[cont.tex] = pygame.image.load(_respath.text_cont(cont.tex)).convert_alpha()
+        t = self.conttex[cont.tex]
+
+        if cont.tex == "generic_54":
+            th = cont.rows * 18 + 17
+            sf = pygame.Surface((cont.w, cont.h), pygame.SRCALPHA)
+            sf.blit(t, (0, 0), pygame.Rect(0, 0, cont.w, th))
+            sf.blit(t, (0, th), pygame.Rect(0, 126, cont.w, 96))
+
+        else:
+            sf = t.subsurface(pygame.Rect(0, 0, cont.w, cont.h))
+
+
+        self.surface.blit(
+            pygame.transform.scale(sf, (
+                int(cont.w * scale), int(cont.h * scale)
+            )), (ix, iy)
+        )
+
+
+        cont.cv._held = inv._held
+        cont.pv._held = inv._held
+        self.rendinvitems(cont.cv, ix, iy, scale)
+        self.rendinvitems(cont.pv, ix, iy, scale)
+
+        if inv._held:
+            mx, my = pygame.mouse.get_pos()
+            self.rendheld(inv._held, mx, my, scale)
+
+
+
+            
+
 
     def rendinvitems(self, inv, inv_x, inv_y, scale):
         mx, my = pygame.mouse.get_pos()

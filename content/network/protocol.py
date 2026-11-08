@@ -48,6 +48,20 @@ class MessageType(IntEnum):
     SERVER_REQUEST  = 30
     SERVER_RESPONSE = 31
     DISCONNECT      = 32
+    PISTON_MOVE     = 56
+    CONT_OPEN       = 57
+    CONT_CLOSE      = 58
+    CONT_SET        = 59
+    CONT_DATA       = 60
+    SUN_ANGLE       = 61
+    NOTE_PLAY       = 62
+    CART_PLACE      = 63
+    CART_RIDE       = 64
+    CART_INPUT      = 65
+    CART_KICK       = 66
+    CART_USE        = 67
+    CART_LIT        = 68
+    CART_BOOM       = 69
 
 
 MT = MessageType
@@ -271,6 +285,46 @@ def unpackitem(pay):
 
 
 
+def mkpiston(x, y, z, v, f, ext, src, done):
+    return struct.pack('<BiiiHBB', MT.PISTON_MOVE, x, y, z, v, f, int(ext) | int(src) << 1 | int(done) << 2)
+
+
+def mkcartplace(x, y, z, kd): return struct.pack('<BiiiB', MT.CART_PLACE, x, y, z, kd)
+def mkcartuse(eid, coal):     return struct.pack('<BIB', MT.CART_USE, eid, int(coal))
+def mkcartride(eid):          return struct.pack('<BI', MT.CART_RIDE, eid)
+def mkcartinput(fw, yaw):     return struct.pack('<Bff', MT.CART_INPUT, fw, yaw)
+def mkcartkick():             return struct.pack('<B', MT.CART_KICK)
+def mkcartlit(eid, fuse):     return struct.pack('<BIB', MT.CART_LIT, eid, fuse)
+def mkcartboom(x, y, z, power, rails): return struct.pack('<B4fB', MT.CART_BOOM, x, y, z, power, int(rails))
+
+
+def mksun(a): return struct.pack('<Bf', MT.SUN_ANGLE, a)
+def mknote(x, y, z, n): return struct.pack('<BiiiB', MT.NOTE_PLAY, x, y, z, n)
+
+
+def mkcontopen(x, y, z):  return struct.pack('<Biii', MT.CONT_OPEN, x, y, z)
+def mkcontclose(x, y, z): return struct.pack('<Biii', MT.CONT_CLOSE, x, y, z)
+
+
+def mkcontset(x, y, z, i, st):
+    return struct.pack('<BiiiHHB', MT.CONT_SET, x, y, z, i, st[0] if st else 0, st[1] if st else 0)
+
+
+def mkcontdata(x, y, z, snap):
+    d = struct.pack('<BiiiH', MT.CONT_DATA, x, y, z, len(snap))
+    for i in snap: d += struct.pack('<HB', i[0] if i else 0, i[1] if i else 0)
+    return d
+
+
+def parsecontdata(data):
+    x, y, z, n = struct.unpack('<iiiH', data[1:15])
+    r = []
+    for i in range(n):
+        a, b = struct.unpack('<HB', data[15 + i * 3:18 + i * 3])
+        r.append((a, b) if b else None)
+    return x, y, z, r
+
+
 def mkblockbulk(chgs):
     d = struct.pack('<BI', MT.BLOCK_BULK, len(chgs))
     for x, y, z, bt in chgs: d += struct.pack('<iiiH', x, y, z, bt)
@@ -466,6 +520,19 @@ class ReadMessage:
             MT.UPDATE_POS:    24, # 3f(12) + 2f(8) + H(2) + B(1)
             MT.BLOCK_CHANGE:  15, # iii(12) + H(2)
             MT.BLOCK_UPDATE:  15,
+            MT.PISTON_MOVE:   17, # iii(12) + H(2) + BB(2)
+            MT.CONT_OPEN:     13, # iii(12)
+            MT.SUN_ANGLE:      5, # f(4)
+            MT.CART_PLACE:    14, # iii(12) + B(1)
+            MT.CART_USE:       6, # I(4) + B(1)
+            MT.CART_RIDE:      5, # I(4)
+            MT.CART_INPUT:     9, # ff(8)
+            MT.CART_KICK:      1,
+            MT.CART_LIT:       6, # I(4) + B(1)
+            MT.CART_BOOM:     18, # 4f(16) + B(1)
+            MT.NOTE_PLAY:     14, # iii(12) + B(1)
+            MT.CONT_CLOSE:    13,
+            MT.CONT_SET:      18, # iii(12) + HH(4) + B(1)
             MT.BLOCK_DMG:     14, # iii(12) + b(1)
             MT.BLOCK_DAMAGE:  18, # I(4) + iii(12) + b(1)
             MT.PLAYER_DMG:     2, # B(1)
@@ -581,6 +648,17 @@ class ReadMessage:
             self.buffer = self.buffer[9 + n:]
             return (mt, d)
 
+
+
+        # B + iii + H(cnt) + (HB)*cnt
+        if mt == MT.CONT_DATA:
+            if not self._pull(15): return None
+            cnt = struct.unpack('<H', self.buffer[13:15])[0]
+            tl  = 15 + cnt * 3
+            if not self._pull(tl): return None
+            d = self.buffer[:tl]
+            self.buffer = self.buffer[tl:]
+            return (mt, d)
 
 
         # B + I(cnt) + (iiiH)*cnt

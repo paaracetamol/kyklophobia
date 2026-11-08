@@ -69,7 +69,8 @@ def dropsafe(ck, x, y, z, maxd=MAXDROP):
     bx, bz = int(flr(x)), int(flr(z))
     by     = int(flr(y))
     for i in range(1, maxd + 1):
-        if ck.issolid(bx, by - i, bz): return True
+        if ck.iscollide(bx, by - i, bz): return True
+        
     return False
 
 

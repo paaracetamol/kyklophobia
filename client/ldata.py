@@ -124,6 +124,8 @@ def wolrdlist():
 
         for root, _d, files in os.walk(wdir):
             for fn in files:
+                # written by migration, not by playing
+                if fn == "world.json": continue
                 fp = os.path.join(root, fn)
                 tot += os.path.getsize(fp)
                 lmod   = max(lmod, os.path.getmtime(fp))
@@ -132,7 +134,11 @@ def wolrdlist():
         if lmod > 0:
             lplayed = datetime.datetime.fromtimestamp(lmod).strftime("%Y-%m-%d %H:%M")
 
-        w.append(dict(nm=nm, path=wdir, size_kb=tot//1024, last_played=lplayed))
+        
+        mp = os.path.join(wdir, "world.json")
+        with open(mp) as f: wtype = json.load(f)["type"]
+
+        w.append(dict(nm=nm, path=wdir, size_kb=tot//1024, last_played=lplayed, wtype=wtype))
 
     return w
 

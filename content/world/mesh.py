@@ -33,7 +33,8 @@ for i in (
     0, 10, 23, 47, 70, 96, 
     152, 156, 157, 158, 
     162, 167, 168, 169, 170, 171, 
-    270, 277, 278, 279, 
+    268, 269, 270, 271, 272, 277, 
+    278, 279, 336, 337, 338, 
     280, 285, 286, 291, 
     333, 334
 ):
@@ -135,10 +136,61 @@ EMITTERS = {
     295:  1,  # end portal
 }
 
+from world.blocks import (
+    STONE_PRESSURE_PLATE as _PLT0, 
+    WOODEN_PRESSURE_PLATE as _PLT1, 
+    LIGHT_WEIGHTED_PRESSURE_PLATE as _PLT2, 
+    HEAVY_WEIGHTED_PRESSURE_PLATE as _PLT3
+)
 BLOCK_EMIT = np.zeros(1024, dtype=np.uint8)
 for i, j in EMITTERS.items(): BLOCK_EMIT[i] = j
 
 
+
+
+# dust connect
+WIRE_DX  = np.array([0, 0, 1, -1], dtype=np.int32)
+WIRE_DZ  = np.array([-1, 1, 0, 0], dtype=np.int32)
+WIRE_BIT = np.array([8, 4, 2, 1],  dtype=np.int32)
+WIRE_AX  = np.array([0, 0, 2, 2],  dtype=np.int32)   # repeater state & 2
+WIRE_F   = np.array([2, 3, 5, 4],  dtype=np.int32)   # observer facing
+WIRE_HK  = np.array([1, 0, 3, 2],  dtype=np.int32)   # hook state facing
+
+# chest facing nsew
+CHEST_DX = np.array([-1, 1, 0, 0], dtype=np.int32)
+CHEST_DZ = np.array([0, 0, -1, 1], dtype=np.int32)
+WIRE_SRC = np.zeros(1024, dtype=np.bool_)
+for i in (36, 161, 274, 278, 279, 280, 204, 205, 259, 260, 277, _PLT0, _PLT1, _PLT2, _PLT3): WIRE_SRC[i] = True
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _rawat(voxels, v_nx, v_px, v_nz, v_pz, x, y, z):
+    if y < 0 or y >= CHUNK_H: return 0
+    if x < 0:         return v_nx[CHUNK_SZ - 1, y, z]
+    if x >= CHUNK_SZ: return v_px[0, y, z]
+    if z < 0:         return v_nz[x, y, CHUNK_SZ - 1]
+    if z >= CHUNK_SZ: return v_pz[x, y, 0]
+
+    return voxels[x, y, z]
+
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _iscube(v, render_mode):
+    b = v & 0x3FF
+    if b == 268 or b == 269: return ((v >> 10) & 8) == 0   # retracted piston
+    if b == 271 or b == 272: return True
+    return b != 0 and not WIRE_SRC[b] and render_mode[b] == 0 and BLOCK_OPAC[b] == 255
+
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def _diodeat(v, f):
+    b = v & 0x3FF
+    st = (v >> 10) & 0x1F
+    if b == 160: return (st & 16) != 0 and (st & 3) == f
+    if b == 161: return (st & 8) != 0 and (st & 3) == f
+    return False
 
 
 # face norm -> downwards axis 0=x, 1=y, 2=z
@@ -483,6 +535,8 @@ def is_localsolid(voxels, x, y, z):
             b == 96 or  # dragon egg
             b == 333 or # sugar cane
             b == 152 or # fire
+            b == 336 or # mving pitson
+            b == 338 or # tripwire
             (119 <= b <= 134) or # glass, stained glass
             (156 <= b <= 177) or # barrier...saplings
             (178 <= b <= 205) or # flowers, plants, double plants, rails, torches
@@ -738,6 +792,7 @@ def is_nonsolidMesh(bt):
     if bt == 8  or bt == 9:   return True  # leaves
     if bt == 10 or bt == 70:  return True  # grass & catus
     if bt >= 156 and bt <= 171: return True  # custom geometry
+    if bt == 336 or bt == 338: return True
     return False
 
 BUILD_FACE_V = np.array([
@@ -1068,7 +1123,7 @@ def build_meshjit(
         h_remap, a_remap, a_rot, b_faceuvs, b_facetex, 
         connect_type, connect_fam, 
         arm_num, arm_elems, arm_faceuvs, arm_facetex, 
-        state_elemoff, state_elemnum
+        state_elemoff, state_elemnum, state_row
     ):
 
 
@@ -1086,6 +1141,7 @@ def build_meshjit(
     tidx = 0
 
     # corner scratch + 3x3 face patch
+    wup = np.empty(4, dtype=np.int32)
     l4 = np.empty((4, 3), dtype=np.float32)
     p9 = np.empty((3, 3, 3), dtype=np.int32)
 
@@ -1278,13 +1334,49 @@ def build_meshjit(
 
                     n_elems = num_elems[btype]
                     bstate = (raw_btype >> 10) & 0x1F
-                    elem_base = state_elemoff[btype, bstate]
+                    _stc = bstate
+
+                    # locked repeater:= powered diode
+                    if btype == 160:
+                        _f = bstate & 3
+                        if _f < 2:
+                            _lka = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x + 1, y, z)
+                            _lkb = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x - 1, y, z)
+                            _lkfa, _lkfb = 2, 3
+
+                        else:
+                            _lka = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x, y, z + 1)
+                            _lkb = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x, y, z - 1)
+                            _lkfa, _lkfb = 1, 0
+                        if _diodeat(_lka, _lkfa) or _diodeat(_lkb, _lkfb): _stc = bstate + 32
+
+                    # chest halves off neighbour
+                    if btype == 273 or btype == 274:
+                        _f = bstate & 3
+                        _stc = _f
+                        _lx, _lz = CHEST_DX[_f], CHEST_DZ[_f]
+                        if   (_rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x + _lx, y, z + _lz) & 0x3FF) == btype: _stc = _f + 4
+                        elif (_rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x - _lx, y, z - _lz) & 0x3FF) == btype: _stc = _f + 8
+
+                    # tripwire: col = nsew mask + 16 if attached
+                    if btype == 338:
+                        _tm = 0
+                        for _di in range(4):
+                            _rn = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x + WIRE_DX[_di], y, z + WIRE_DZ[_di])
+                            if (_rn & 0x3FF) == 338 or ((_rn & 0x3FF) == 278 and ((_rn >> 10) & 3) == WIRE_HK[_di]):
+                                _tm = _tm | WIRE_BIT[_di]
+                        _stc = _tm + (16 if bstate & 4 else 0)
+
+                    elem_base = state_elemoff[btype, _stc]
+                    _row = state_row[btype, _stc]
+                    if state_elemnum[btype, _stc] > 0: n_elems = state_elemnum[btype, _stc]
+                    _nwup = 0
 
                     # neighbor aware orientation
                     
                     # rails
                     # elem 0=N/S straight, 1=E/W straight, 2=NE curve, 3=NW, 4=SW, 5=SE
-                    if btype >= 198 and btype <= 202:
+                    if False and btype >= 198 and btype <= 202:
 
 
 
@@ -1429,26 +1521,27 @@ def build_meshjit(
                     # mask = (N<<3)|(S<<2)|(E<<1)|W -> elem_base = mask (0-15)
                     if btype == 159:
                         _rd_mask = np.int32(0)
-                        _rdn = np.int32(0)
-                        
-                        if z - 1 >= 0:       _rdn = voxels[x, y, z - 1] & 0x3FF
-                        else:                _rdn = voxels_nz[x, y, CHUNK_SZ - 1] & 0x3FF
+                        _cub = _iscube(_rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, x, y + 1, z), render_mode)
+                        for _di in range(4):
+                            _nx = x + WIRE_DX[_di]
+                            _nz = z + WIRE_DZ[_di]
+                            _rn = _rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, _nx, y, _nz)
+                            _ncb = _iscube(_rn, render_mode)
+                            _nb = _rn & 0x3FF
+                            _lnk = False
+                            if _nb == 159 or WIRE_SRC[_nb]: _lnk = True
+                            elif _nb == 160: _lnk = ((_rn >> 10) & 2) == WIRE_AX[_di]
+                            elif _nb == 337: _lnk = ((_rn >> 10) & 7) == WIRE_F[_di]
+                            elif _ncb:
+                                if not _cub and (_rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, _nx, y + 1, _nz) & 0x3FF) == 159:
+                                    _lnk = True
+                                    wup[_nwup] = 16 + _di
+                                    _nwup += 1
+                            elif (_rawat(voxels, voxels_nx, voxels_px, voxels_nz, voxels_pz, _nx, y - 1, _nz) & 0x3FF) == 159:
+                                _lnk = True
+                            if _lnk: _rd_mask = _rd_mask | WIRE_BIT[_di]
 
-                        if _rdn == 159:      _rd_mask = _rd_mask | np.int32(8) # N
-                        if z + 1 < CHUNK_SZ: _rdn = voxels[x, y, z + 1] & 0x3FF
-                        else:                _rdn = voxels_pz[x, y, 0] & 0x3FF
 
-                        if _rdn == 159:      _rd_mask = _rd_mask | np.int32(4) # s
-                        if x + 1 < CHUNK_SZ: _rdn = voxels[x + 1, y, z] & 0x3FF
-                        else:                _rdn = voxels_px[0, y, z] & 0x3FF
-
-                        if _rdn == 159:      _rd_mask = _rd_mask | np.int32(2) # e
-                        if x - 1 >= 0:       _rdn = voxels[x - 1, y, z] & 0x3FF
-                        else:                _rdn = voxels_nx[CHUNK_SZ - 1, y, z] & 0x3FF
-
-                        if _rdn == 159:      _rd_mask = _rd_mask | np.int32(1) # w
-                        
-                        
                         elem_base = _rd_mask
                     
                     
@@ -1457,12 +1550,13 @@ def build_meshjit(
                     
                     
                     
-                    for elem_idx in range(elem_base, elem_base + n_elems):
-                        elem_faces = blk_elems[btype, elem_idx]
+                    for _ek in range(n_elems + _nwup):
+                        elem_idx = elem_base + _ek if _ek < n_elems else wup[_ek - n_elems]
+                        elem_faces = blk_elems[_row, elem_idx]
 
                         for face in range(6):
                             draw = True
-                            if btype == 159 and face > 0:  draw = False
+                            if btype == 159 and (face > 1 or (face == 1 and elem_idx < 16)):  draw = False
                             if do_cull:
                                 
                                 
@@ -1497,13 +1591,13 @@ def build_meshjit(
                                 if _uvmode == 2:
                                     
                                     # all BL BR TR TL pairs 
-                                    tex_u = b_facetex[btype, elem_idx, face, 0]
+                                    tex_u = b_facetex[_row, elem_idx, face, 0]
                                     if tex_u >= 0.0:
                                         u_start = tex_u
-                                        v_start = b_facetex[btype, elem_idx, face, 1]
+                                        v_start = b_facetex[_row, elem_idx, face, 1]
                                     
                                     
-                                    fuv = b_faceuvs[btype, elem_idx, face]
+                                    fuv = b_faceuvs[_row, elem_idx, face]
                                     # BL_u, BL_v, BR_u, BR_v, TR_u, TR_v, TL_u, TL_v
                                     # vertex indices: 0,3=BL  1=BR  2,4=TR  5=TL
                                     u_bl = u_start + fuv[0] * uv_w;  v_bl = v_start + fuv[1] * uv_h
@@ -1571,7 +1665,7 @@ def build_meshjit(
                                         tverts[tidx + 2] = z + vz + offset_z
                                         tverts[tidx + 3] = l4[0, 0]
                                         tverts[tidx + 4] = l4[0, 1]
-                                        tverts[tidx + 5] = l4[0, 2] * _nshade(nx, ny, nz)
+                                        tverts[tidx + 5] = (2.0 + (bstate & 15)) if btype == 159 else l4[0, 2] * _nshade(nx, ny, nz)
                                         tverts[tidx + 6] = u
                                         tverts[tidx + 7] = v
                                         tidx += 8
@@ -1583,7 +1677,7 @@ def build_meshjit(
                                         vertices[vertidx + 2] = z + vz + offset_z
                                         vertices[vertidx + 3] = l4[0, 0]
                                         vertices[vertidx + 4] = l4[0, 1]
-                                        vertices[vertidx + 5] = l4[0, 2] * _nshade(nx, ny, nz)
+                                        vertices[vertidx + 5] = (2.0 + (bstate & 15)) if btype == 159 else l4[0, 2] * _nshade(nx, ny, nz)
                                         vertices[vertidx + 6] = u
                                         vertices[vertidx + 7] = v
                                         vertidx += 8
@@ -1736,7 +1830,7 @@ def build_meshjit(
                     
                 
                 
-                if btype == 156: continue #barrier:156
+                if btype == 156 or btype == 336: continue #barrier:156 moving piston:336
 
                 # stained glass:119-134
                 # -> trans buffer

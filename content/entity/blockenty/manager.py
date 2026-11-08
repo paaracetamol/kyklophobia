@@ -72,10 +72,11 @@ class BlockEntityManager:
             if i.alive:
                 i.render(self)
 
-    def draw_cube(self, world_pos, uvs, tint=(1.0, 1.0, 1.0), flash=False):
+    def draw_cube(self, world_pos, uvs, tint=(1.0, 1.0, 1.0), flash=0.0, scale=1.0):
         self.prog['world_pos'].write(np.array(world_pos, dtype='f4').tobytes())
         self.prog['tint'].write(np.array(tint, dtype='f4').tobytes())
-        self.prog['flash'].value = 1 if flash else 0
+        self.prog['flash'].value = float(flash)
+        self.prog['scale'].value = float(scale)
         self.uv_buf.write(uvs.tobytes())
         self.vao.render(moderngl.TRIANGLES)
         

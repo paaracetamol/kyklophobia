@@ -198,12 +198,17 @@ class PlayerModel:
         self,
         pitch=0.0, r_arm=0.0, l_arm=0.0, r_leg=0.0, l_leg=0.0,
         r_arm_z=0.0, l_arm_z=0.0, headyawoff=0.0, crouch=0.0,
-        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0
+        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0, sit=False
     ):
         m   = mident()
         rad = np.radians
 
 
+
+        # ModelBiped.isRiding
+        if sit:
+            r_arm -= 36.0
+            l_arm -= 36.0
 
         hy  = self.LEG_H
         sdy = self.LEG_H + self.BODY_H
@@ -213,11 +218,19 @@ class PlayerModel:
         m[int(PART_R_ARM)] = atpivot(
             rotz(rad(r_arm_z)) @ roty(rad(r_arm_y)) @ rotx(rad(r_arm)), ( aox, sdy, 0)
         )
+
         m[int(PART_L_ARM)] = atpivot(
             rotz(rad(l_arm_z)) @ roty(rad(l_arm_y)) @ rotx(rad(l_arm)), (-aox, sdy, 0)
         )
+
         m[int(PART_R_LEG)] = atpivot(rotx(rad(r_leg)),  ( lhw, hy, 0))
         m[int(PART_L_LEG)] = atpivot(rotx(rad(-l_leg)), (-lhw, hy, 0))
+
+
+        if sit:
+            m[int(PART_L_LEG)] = atpivot(rotz(-0.07853982) @ roty(0.31415927)  @ rotx(-1.4137167), (-lhw, hy, 0))
+            m[int(PART_R_LEG)] = atpivot(rotz(0.07853982)  @ roty(-0.31415927) @ rotx(-1.4137167), (lhw,  hy, 0))
+
         m[int(PART_HEAD)]  = atpivot(
             roty(rad(headyawoff)) @ rotx(rad(-pitch)), (0, sdy, 0)
         )
@@ -250,7 +263,7 @@ class PlayerModel:
         self, mvp, pos, yaw, pitch=0.0, sun_pos=None,
         r_arm=0.0, l_arm=0.0, r_leg=0.0, l_leg=0.0, r_arm_z=0.0, l_arm_z=0.0,
         headyawoff=0.0, crouch=0.0, _hidehead=False, tex=None, hurt=0.0,
-        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0
+        r_arm_y=0.0, l_arm_y=0.0, body_y=0.0, sit=False
     ):
         """
         (tex or self.skin_tex).use(0)
@@ -278,7 +291,7 @@ class PlayerModel:
         mats = self.posemats(
             pitch, r_arm, l_arm, r_leg, l_leg,
             r_arm_z, l_arm_z, headyawoff, crouch,
-            r_arm_y, l_arm_y, body_y,
+            r_arm_y, l_arm_y, body_y, sit,
         )
         self.model.render(
             mvp, pos, yaw, mats,

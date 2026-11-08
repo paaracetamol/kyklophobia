@@ -153,11 +153,11 @@ class Launcher:
 
 
 
-    def bootworld(self, wname, seed=None):
+    def bootworld(self, wname, seed=None, wtype=None):
         log = LoadingLog(self.bfont)
         log.add(f"Loading world '{wname}'...", GRAY)
         self.drawloading(log)
-        self.rungame(wname=wname, seed=seed, log=log)
+        self.rungame(wname=wname, seed=seed, wtype=wtype, log=log)
 
 
     def bootsv(self, address):
@@ -173,7 +173,8 @@ class Launcher:
             wname="default",
             seed=None,
             svaddr=None,
-            log=None
+            log=None,
+            wtype=None
         ):
         setsaves(wname)
 
@@ -205,7 +206,8 @@ class Launcher:
                 wname=wname,
                 svaddr=svaddr,
                 seed=seed,
-                managed=True
+                managed=True,
+                wtype=wtype
             )
 
             if svaddr:
