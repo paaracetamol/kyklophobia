@@ -8,8 +8,8 @@ import math
 import struct
 import time
 import os
-from world.trees import TreeManager, treetochunk, grasstochunk, cactitochunk
-from world.decor import RockManager, addchunkrocks
+#from world.trees import TreeManager, treetochunk, grasstochunk, cactitochunk
+#from world.decor import RockManager, addchunkrocks
 
 
 
@@ -55,8 +55,7 @@ EMPTY_LIGHT = np.zeros((CHUNK_SZ, CHUNK_H, CHUNK_SZ), dtype=np.uint8)
 
 
 
-
-
+"""
 from world.noise import (
     fade, lerp, grad, noise3d, fractal3d,
     get_climate, climate_tobiome, get_biome, smooth_bonus,
@@ -66,6 +65,7 @@ from world.noise import (
     BIOME_JUNGLE, BIOME_BADLANDS, BIOME_FOREST, BIOME_NAMES,
 )
 from world.generate import _generate
+"""
 from world.redstone import Redstone, NOCOLLIDE, OPENABLE, OPEN_BIT
 from world.mesh import (
     bakelight, build_meshjit, BLOCK_EMIT,
@@ -75,7 +75,8 @@ from world.mesh import (
     FACE_VERTS, FACE_NORMALS, FACE_UV_OFFSETS, GRASS_VERTS,
     BUILD_FACE_V, BUILD_FACE_N, BUILD_FACE_UV, MESH_GRASS_V,
 )
-from world.chunk import PerlinNoise, Chunk, EMPTY_VOXEL, EMPTY_LIGHT
+from world import generators
+from world.chunk import Chunk, EMPTY_VOXEL, EMPTY_LIGHT
 
 
 
@@ -94,19 +95,6 @@ def warmup_jit_functions():
             dvox[x, 59, z] = 2
             dvox[x, 58, z] = 3
 
-    _ = fade(0.5)
-    _ = lerp(0.5, 0.0, 1.0)
-    _ = grad(1, 0.5, 0.5, 0.5)
-    _ = noise3d(0.0, 0.0, 0.0, p)
-    _ = fractal3d(0.0, 0.0, 0.0, p, 4, 0.5, 2.0, 0.01, 0.01, 0.01)
-    _, _ = get_climate(0.0, 0.0, p)
-    _ = get_biome(0.0, 0.0, p)
-    _ = smooth_bonus(0.5, 0.5, 64.0)
-    _ = _badlands_band(64)
-    _, _ = locate_biome(0.0, 0.0, 0, p, 0, 32)   # max_radius=0 -> instant return
-    
-    dbiomes = np.zeros((CHUNK_SZ, CHUNK_SZ), dtype=np.int8)
-    _generate(dvox, 0.0, 0.0, p, dbiomes)
     dblit = np.zeros((CHUNK_SZ, CHUNK_H, CHUNK_SZ), dtype=np.uint8)
     bakelight(dvox, dlit, dblit, dlit, dlit, dlit, dlit, dblit, dblit, dblit, dblit, BLOCK_EMIT)
     
@@ -171,9 +159,11 @@ class ChunkManager:
         self.wname = wname
         self.is_server = is_server   # owns the world files
         self.headless  = headless    # no gl, voxels only
-        self.is_client = False   # set on connect, keeps mods thru unload
-        self.netmode   = False   # server owns voxels, we just wait for them
-        self.netreq    = None    # set on connect, asks for a missing chunk
+        self.gen       = generators.get(world.wtype)
+        self.gen.setup(world)
+        self.is_client = False   # @connect, keep mods on unload
+        self.netmode   = False
+        self.netreq    = None    # @connect, request missing chunk
         self.chunks = {}
         self.queue_chunkbuild = deque()
         self.queue_meshupload = Queue()
@@ -419,6 +409,7 @@ class ChunkManager:
             self.chunks[(cx, cz)] = c
 
         c.voxels[:] = vox
+        c.tint        = self.gen.tint(c)
         c.gen_ready   = True
         c.light_dirty = True
         c.mesh_built  = False

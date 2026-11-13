@@ -108,7 +108,7 @@ game/
 
 ## voxels
 
-chunk = `(16, 128, 16) uint16`
+chunk = `(16, 256, 16) uint16`
 
 ```
 bit  15  14 13 12 11 10  9 8 7 6 5 4 3 2 1 0
@@ -119,7 +119,7 @@ bit  15  14 13 12 11 10  9 8 7 6 5 4 3 2 1 0
 ```
 
 
-light = 2 separate `(16,128,16) uint8` arrays
+light = 2 separate `(16,256,16) uint8` arrays
 
 
 ## chunk generation
@@ -135,16 +135,16 @@ queue_chunkbuild ──► mesh_builder_thread pop, dist sort -> player
 terrain_executor     client
      │               server
      │
-     ├── _generate()                                    world/generate.py
-     │     1a  climate+biome on 5² grid : 1 sample every 4 b
-     │     1b  density field, 5 * 17 * 5
-     │     2   trilinear interp -> 16*128*16, dens > 0 = solid
-     │     2b  cave carve, 2 noise field, repelled from water column
-     │     3   surface cap p biome, sea level, badlands band, ice
+     ├── gen = world/generators/<world type>            picked once from world.json
+     │     default  _generate() in default/generate.py (128 tall, top half stays air)
+     │       1a  climate+biome on 5² grid : 1 sample every 4 b
+     │       1b  density field, 5 * 17 * 5
+     │       2   trilinear interp -> 16*128*16, dens > 0 = solid
+     │       2b  cave carve, 2 noise field, repelled from water column
+     │       3   surface cap p biome, sea level, badlands band, ice
+     │       decorators, pending_decorations[cx,cz]
+     │     flat     layers from config.FLAT_LAYERS
      │
-     ├── decorators
-     │
-     ├── pending_decorations[cx,cz]
      ├── applymods()
      └── gen_ready = True
      │
@@ -159,6 +159,14 @@ queue_meshupload ──► main thread, 4ms/frame, 4-6 chunk -> upload_mesh()
 ```
 
 
+### generators
+
+each world type is a self-contained folder in `world/generators/`, exposing
+`BIOMES, setup, reseed, gen, tint, spawn, biome, locate` (contract in
+`generators/__init__.py`). nothing outside it knows about noise, trees or caves.
+`tint()` can hand the shader per column biome data, `world/tintmap.py` keeps
+it in a ring texture; `None` keeps the fixed colormap colour.
+
 ### caves
 
 carved last. 
@@ -167,13 +175,12 @@ two independent 3d noise field, a cell is dug when
 threshold falls off with height (y<95=nothing) and is scaled down near any
 column that contain water.
 
-
 ## lighting
 
 2 channel, both 0-15 BFS flood (njit): `bakelight()`
 
 ```
-   sky[16,128,16] u8                     blk[16,128,16] u8
+   sky[16,256,16] u8                     blk[16,256,16] u8
    ──────────────────                    ──────────────────
    seed top down p column,               seed every emitter cell,
    15 - BLOCK_OPAC[id] as it             BLOCK_EMIT[id]
@@ -264,7 +271,7 @@ saves/<world>/
 
 ```python
 RENDER_DIST  = 10     # chunk radius
-CHUNK_H      = 128
+CHUNK_H      = 256
 SEA_LEVEL    = 64
 SEED         = 12345
 FOV          = 70.0

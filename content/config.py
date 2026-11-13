@@ -23,7 +23,7 @@ FLAT_SPAWN        = 57.0
 
 
 CHUNK_SZ          = 16
-CHUNK_H           = 128
+CHUNK_H           = 256
 SEA_LEVEL         = 64
 WATER_OFF         = 4
 WATER_TOP         = 0 #0.8       # TODO water top state
@@ -41,6 +41,7 @@ HLIGHT_SCL        = 1.002
 LINE_W            = 3.0
 
 RENDER_DIST       = 10
+TINT_RING         = 1024
 SEED              = 12345
 BREAK_T           = 0.3
 RAYCAST_DIST      = 5.0

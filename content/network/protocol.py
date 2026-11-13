@@ -150,8 +150,8 @@ def mkhunger(hg):
 
 
 
-def mkseed(seed):
-    return struct.pack('<BI', MT._SEED, seed)
+def mkseed(seed, wt=0):
+    return struct.pack('<Bqb', MT._SEED, seed, wt)
 
 
 
@@ -539,7 +539,7 @@ class ReadMessage:
             MT.PLAYER_HURT:    6, # I(4) + B(1)
             MT.PLAYER_HEALTH:  2, # B(1)
             MT.PLAYER_HUNGER:  2,
-            MT._SEED:          5, # I(4)
+            MT._SEED:          10, # q(8) b(1)
             MT.PLAYER_LEFT:    5,
             # MT.ITEM_SPAWN:    37, # III(12) + 3f(12) + 3f(-12)
             # MT.ITEM_DESPAWN:   5,
@@ -820,7 +820,7 @@ class ReadMessage:
 
 
     def parse_seed(self, data):
-        return struct.unpack('<I', data[1:])[0]
+        return struct.unpack('<qb', data[1:])
 
 
 

@@ -2,6 +2,7 @@
 //in float v_ao
 in vec3 v_lit;
 in vec2 v_uv;
+in vec3 v_wpos;
 //in float v_height;
 //in vec3 v_world_pos;
 uniform sampler2D texture0;
@@ -9,6 +10,8 @@ uniform sampler2D clrmap_grass;
 uniform sampler2D clrmap_folage;
 uniform sampler2D meta_atlas;
 uniform sampler2D lightmap;
+uniform sampler2D tintmap;
+const int TINT_RING = 1024;
 uniform vec3 fog_col;
 uniform float chunk_fade;
 
@@ -53,7 +56,30 @@ float sunlight(vec3 n, vec3 sd) {
 }
 */
 
+ivec3 cmap(sampler2D m, float t, float h) {
+    t = clamp(t, 0.0, 1.0);
+    h = clamp(h, 0.0, 1.0) * t;
+    int i = int((1.0 - t) * 255.0);
+    int j = int((1.0 - h) * 255.0);
+    return ivec3(texelFetch(m, ivec2(i, 255 - j), 0).rgb * 255.0 + 0.5);
+}
+
+vec3 wn;
+
+bool biomecol(int k, out vec3 col, int dy) {
+    ivec3 b = ivec3(floor(v_wpos - wn * 0.01));
+    vec4 c = texelFetch(tintmap, ivec2(b.x & (TINT_RING - 1), b.z & (TINT_RING - 1)), 0);
+    if (c.a < 0.5) return false;
+    col = vec3(k == 1 ? cmap(clrmap_folage, c.g, c.b) : cmap(clrmap_grass, c.g, c.b)) / 255.0;
+    return true;
+}
+
+bool cell(int c, int r, float uw, float uh) {
+    return v_uv.x >= float(c) * uw && v_uv.x < float(c + 1) * uw && v_uv.y >= 1.0 - float(r + 1) * uh && v_uv.y < 1.0 - float(r) * uh;
+}
+
 void main() {
+    wn = normalize(cross(dFdx(v_wpos), dFdy(v_wpos)));
     // anim: src uv -> meta atlas uv (adat = [src_uv, dst_uv])
     vec2 suv   = v_uv;
     bool anim  = false;
@@ -92,17 +118,29 @@ void main() {
     bool leaves = v_uv.y >= r10b && v_uv.y < r10t && v_uv.x >= 3.0*uv_w && v_uv.x < 9.0*uv_w;
     bool tgrs  = v_uv.x >= 8.0*uv_w && v_uv.x < 9.0*uv_w && v_uv.y >= r16b && v_uv.y < r16t;
 
-    if (gtop || tgrs) {
-        tc.rgb *= texture(clrmap_grass, uv_g).rgb;
+    bool grs   = gtop || tgrs || cell(9, 5, uv_w, uv_h) || (v_uv.y >= 1.0 - 5.0 * uv_h && v_uv.y < 1.0 - 4.0 * uv_h && v_uv.x >= uv_w && v_uv.x < 5.0 * uv_w);
+    bool vine  = cell(15, 16, uv_w, uv_h);
+    bool lily  = cell(18, 16, uv_w, uv_h);
+    vec3 bc;
+    int  up    = cell(2, 4, uv_w, uv_h) || cell(4, 4, uv_w, uv_h) ? 1 : 0;
+
+    if (grs) {
+        tc.rgb *= biomecol(0, bc, up) ? bc : texture(clrmap_grass, uv_g).rgb;
     } else if (gside) {
         vec2 luv = vec2(
             fract((v_uv.x - 4.0 * uv_w) / uv_w),
             fract((v_uv.y - r8b) / uv_h)
         );
         vec4 ov = texture(texture0, vec2(5.0 * uv_w + luv.x * uv_w, r8b + luv.y * uv_h));
-        if (ov.a > 0.1) tc.rgb = ov.rgb * texture(clrmap_grass, uv_g).rgb;
-    } else if (leaves) {
-        tc.rgb *= texture(clrmap_folage, uv_f).rgb;
+        if (ov.a > 0.1) tc.rgb = ov.rgb * (biomecol(0, bc, 0) ? bc : texture(clrmap_grass, uv_g).rgb);
+    } else if (leaves && cell(8, 10, uv_w, uv_h)) {
+        tc.rgb *= vec3(97, 153, 97) / 255.0;
+    } else if (leaves && cell(5, 10, uv_w, uv_h)) {
+        tc.rgb *= vec3(128, 167, 85) / 255.0;
+    } else if (leaves || vine) {
+        tc.rgb *= biomecol(1, bc, 0) ? bc : texture(clrmap_folage, uv_f).rgb;
+    } else if (lily) {
+        tc.rgb *= vec3(32, 128, 48) / 255.0;
     }
 
     

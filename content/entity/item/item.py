@@ -9,7 +9,7 @@ import _respath
 from config import (
     DROP_PICKUP_DELAY, DROP_PICKUP_RANGE, DROP_LIFETIME,
     DROP_BOBSPEED, DROP_BOBHEIGHT, DROP_SPIN, DROP_SZ,
-    DROP_G, DROP_F
+    DROP_G, DROP_F, CHUNK_H
 )
 from items.registry import REGISTRY
 from world.animation import getanims
@@ -458,7 +458,8 @@ class ItemEntityManager:
         sy = int(math.floor(y_start))
 
         for y in range(sy, sy - 10, -1):
-            if y < 0 or y >= 128: continue
+            if y < 0 or y >= CHUNK_H: continue
+            
             if self.world.chunker.iscollide(cx, y, cz):
                 return y + 1.0
         return -1000.0

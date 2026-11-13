@@ -1,10 +1,12 @@
 import numpy as np
 from numba import njit, prange
 from config import (
-    CHUNK_SZ, CHUNK_H, SEA_LEVEL, WATER_OFF,
+    CHUNK_SZ, SEA_LEVEL, WATER_OFF,
     TERRAIN_SCL_X, TERRAIN_SCL_Z, TERRAIN_SCL_Y
 )
-from world.noise import (
+CHUNK_H = 128 # testworld gen only fills up to 128 (old height)
+
+from .noise import (
     noise3d, fractal3d, get_climate, climate_tobiome,
     smooth_bonus, _hf_badlands, _badland_bonus, _badlands_band
 )
@@ -33,7 +35,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
         
         
 
-    # pass 1a
+    
     # climate && biome @ coarse grid
     for x in prange(5):
         for z in range(5):
@@ -48,7 +50,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
             
             
 
-    # pass 1b
+    
     # noise field && badlands bound blend
     for x in prange(5):
         for z in range(5):
@@ -120,7 +122,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
     
     
     
-    # pass 2
+    
     # trilinear interpol to voxels
     
     for x in prange(4):
@@ -194,7 +196,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
     
     
     
-    # pass 2b
+    
     # cave carving
     # water repelled
     sea_wl = SEA_LEVEL - WATER_OFF
@@ -286,7 +288,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
     
     
     
-    # pass3 
+    
     # surface blocks 
     # w bilinear climate enterpol
     for x in range(CHUNK_SZ):
@@ -376,7 +378,7 @@ def _generate(voxels, off_x, off_z, p, biomes):
     
     
     
-    # post processing passes --
+    
     # biome specific decors and such
     
     # terracotta band

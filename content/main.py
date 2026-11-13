@@ -14,14 +14,14 @@ if getattr(sys, 'frozen', False):
 
 from engine.camera import Camera
 from entity.player.player import Player
-from world.terrain import ChunkManager, PerlinNoise, get_biome, BIOME_NAMES
+from world.terrain import ChunkManager
 
 from world.blocks import (
     _FACINGTYPE, FACINGNONE, FACING_H, FACING_AX,
     FACE_N, FACE_S, FACE_E, FACE_W,
     AXY, AXX, AXZ, UV_W, UV_H,
 )
-from world import blocks
+from world import blocks, generators
 
 
 import config
@@ -52,6 +52,7 @@ from entity.item.item import ItemEntityManager
 from entity.player._held import HeldItemRenderer
 from world.renderers.moving import MovingRenderer
 from config import TICK
+from world.tintmap import TintMap
 from entity import motion
 from world.redstone import (
     POPITEM, TRAPS, ATTACHED, BUTTONS, ON_BIT, 
@@ -211,6 +212,8 @@ class VoxelWorld:
         self.lightmap.use(4)
         self.prog['lightmap'].value = 4
         self.prog['chunk_fade'].value = 1.0
+
+        self.tintmap = TintMap(self.ctx, self.prog)
         
         
         
@@ -352,8 +355,8 @@ class VoxelWorld:
         )
         
 
-        from world.trees import TreeManager
-        from world.decor import RockManager
+        #from world.trees import TreeManager
+        #from world.decor import RockManager
         from ui.bfont import Font
 
         self.text_tag = {}
@@ -365,16 +368,13 @@ class VoxelWorld:
         
         if svaddr: self.seed, self.wtype = seed if seed is not None else SEED, "default"
         else:      self.seed, self.wtype = config.worldmeta(wname, seed, wtype)
-        self.noise    = PerlinNoise(seed=self.seed)
-
-        self.trees = TreeManager(assetdir="assets")
-        self.rocks = RockManager(assetdir="assets")
+        self._nxttype = self.wtype
         self.ui       = UIManager(self.ctx, (WIN_W, WIN_H))
         self.hud      = HUDManager(self.ctx, (WIN_W, WIN_H))
         
         
         self.p   = Player(
-            self, pos=np.array([0.0, config.FLAT_SPAWN if self.wtype == "flat" else 80.0, 0.0], dtype='f4')
+            self, pos=np.array((0.0, 80.0, 0.0) if svaddr else generators.get(self.wtype).spawn(self.seed), dtype='f4')
         )
         self.p.ui = self.ui
         self.p.inv = Inventory()
@@ -1654,8 +1654,7 @@ class VoxelWorld:
             if self.is_client and self.netclient and self.netclient.isconn():
                 si, sip = "Connected", f"Server: {self.netclient.host}:{self.netclient.port}"
                 
-            bid  = get_biome(fx, fz, self.chunker.world.noise.p)
-            bnm  = BIOME_NAMES[bid] if 0 <= bid < len(BIOME_NAMES) else "Unknown"
+            bnm  = self.chunker.gen.biome(fx, fz, self.chunker.world)
             
             stats = [
                      f"FPS: {fps:.1f}", "", 
@@ -1894,8 +1893,7 @@ class VoxelWorld:
 
         self.ui.chatmsg("restoring local world...", color=(200, 200, 200))
         self.seed  = snap['seed']
-        self.noise = PerlinNoise(seed=self.seed)
-        self.chunker.world.noise = self.noise
+        self.chunker.gen.reseed(self)
         self.chunker.resetworld()
         if snap['mods']:
             for k, m in snap['mods'].items():
@@ -1921,8 +1919,18 @@ class VoxelWorld:
             seed = self._nxtseed
             self.ui.chatmsg(f"resetting world {seed}...", color=(200, 255, 200))
             self.seed = seed
-            self.noise = PerlinNoise(seed=seed)
-            self.chunker.world.noise = self.noise
+
+            if self._nxttype != self.wtype:
+                self.wtype = self._nxttype
+                self.chunker.gen = generators.get(self.wtype)
+                self.chunker.gen.setup(self)
+                self.tintmap.tex.release()
+                self.tintmap = TintMap(self.ctx, self.prog)
+
+            else: 
+                self.chunker.gen.reseed(self)
+
+
             self.chunker.resetworld()
             self.entitys.clear()
             if self.pmodpay:
@@ -1945,10 +1953,14 @@ class VoxelWorld:
     def bindcallbacks(self):
         if not self.netclient: return
 
-        def on_seed(seed):
+        def on_seed(sd):
+            seed, wt = sd
             with self.statelock:
+
+                self._nxttype = generators.TYPES[wt]
                 self.ui.chatmsg(str(seed), color=(200, 255, 200))
                 self.ui.chatmsg("queue reload scheduled", color=(200, 255, 200))
+                
                 self._nxtseed, self._resetreq = seed, True
                 self.pmodpay = None
                 self._pspawn  = None

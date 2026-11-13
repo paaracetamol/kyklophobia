@@ -2,7 +2,7 @@ import math
 import random
 import numpy as np
 
-from config import TICK
+from config import TICK, CHUNK_H
 from entity import motion
 from entity.core import (
     Entity, regentity, 
@@ -79,7 +79,7 @@ def israil(ck, x, y, z): return ck.getblock(x, y, z) in ALLRAILS
 
 def railv(ck, x, y, z):
     c = ck.chunks.get((x // 16, z // 16))
-    if not c or not c.gen_ready or y < 0 or y >= 128: return 0
+    if not c or not c.gen_ready or y < 0 or y >= CHUNK_H: return 0
 
     return int(c.voxels[x - c.offset_x, y, z - c.offset_z])
 

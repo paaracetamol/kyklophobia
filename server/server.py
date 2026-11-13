@@ -2,12 +2,44 @@ import argparse
 import signal
 import sys
 import os
+import shutil
+import hashlib
 import time
 import logformat
 
 SDIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SDIR)
 CDIR = os.path.join(ROOT, "content")
+
+
+
+# numba cache
+STAMPF = ("config.py", "world/blocks.py", "world/renderers/registry.py")
+
+def cachestamp(cdir):
+    h = hashlib.md5()
+    for f in STAMPF:
+        with open(os.path.join(cdir, f), "rb") as fp: h.update(fp.read())
+
+    return h.hexdigest()
+
+# world cache
+def seedcache(cdir, content):
+    st = cachestamp(content)
+    sf = os.path.join(cdir, "STAMP")
+    rd = lambda f: open(f).read() if os.path.exists(f) else ""
+
+    if os.listdir(cdir) and rd(sf) != st:
+        shutil.rmtree(cdir)
+        os.makedirs(cdir)
+
+    if not os.listdir(cdir):
+        sv = os.path.dirname(os.path.dirname(cdir))
+        cs = [os.path.join(sv, d, "cache") for d in os.listdir(sv)]
+        cs = [c for c in cs if c != cdir and rd(os.path.join(c, "STAMP")) == st]
+        if cs: shutil.copytree(max(cs, key=os.path.getmtime), cdir, dirs_exist_ok=True)
+        
+    with open(sf, "w") as fp: fp.write(st)
 
 
 def _setup_path():
@@ -151,6 +183,7 @@ def main():
 
     cdir = os.path.join(sdir, "cache")
     os.makedirs(cdir, exist_ok=True)
+    seedcache(cdir, os.path.join(os.path.dirname(SDIR), "content"))
     os.environ["NUMBA_CACHE_DIR"] = cdir
 
     from instance import Instance

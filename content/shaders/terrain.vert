@@ -5,6 +5,7 @@ in vec2 in_uv;
 uniform mat4 mvp;
 out vec3 v_lit;
 out vec2 v_uv;
+out vec3 v_wpos;
 //out float v_height;
 //out vec3 v_world_pos;
 
@@ -14,4 +15,5 @@ void main() {
     //v_normal = in_norm;
     v_lit = in_lit;
     v_uv = in_uv;
+    v_wpos = in_pos;
 }

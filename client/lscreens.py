@@ -24,6 +24,13 @@ from ldata import (
 
 
 
+
+# text seed -> int, 31 * h + c -> 32bit
+def strhash(st, h=0):
+    b = st.encode("utf-16-be")
+    for i in range(0, len(b), 2): h = (31 * h + (b[i] << 8 | b[i + 1])) & 0xFFFFFFFF
+    return h - (1 << 32) if h >= 1 << 31 else h
+
 class Screen:
     def __init__(self, launch):
         self.L       = launch
@@ -386,7 +393,8 @@ class CreateWorldScreen(Screen):
 
 
     def cycletype(self):
-        self.wtype = "flat" if self.wtype == "default" else "default"
+        t = ("default", "flat")
+        self.wtype = t[(t.index(self.wtype) + 1) % len(t)]
         self.btn_type.text = f"World Type: {self.wtype.capitalize()}"
 
 
@@ -404,7 +412,7 @@ class CreateWorldScreen(Screen):
         os.makedirs(path, exist_ok=True)
 
         st   = self.ti_seed.text.strip()
-        seed = int(st) if st.lstrip('-').isdigit() else (hash(st) & 0x7FFFFFFF if st else None)
+        seed = int(st) if st.lstrip('-').isdigit() else (strhash(st) if st else None)
 
         self.L.bootworld(safe, seed=seed, wtype=self.wtype)
 

@@ -2,9 +2,7 @@ import numpy as np
 import threading
 import time
 import moderngl
-from config import CHUNK_SZ, CHUNK_H, SEA_LEVEL, FLAT_LAYERS
-from world.trees import treetochunk, grasstochunk, cactitochunk
-from world.decor import addchunkrocks
+from config import CHUNK_SZ, CHUNK_H, SEA_LEVEL
 from world.blocks import (
     NONSOLID_BLOCKS,
     _FACINGTYPE, HOR_UV_REMAP, AXIS_UV_REMAP, AXIS_UV_ROT,
@@ -18,7 +16,7 @@ from world.renderers.registry import (
     BLOCK_ARM_NUM, BLOCK_ARM_ELEM, BLOCK_ARM_FUVS, BLOCK_ARM_FTEX,
     STATE_ELEM_OFF, STATE_ELEM_NUM, STATE_ROW,
 )
-from world.generate import _generate
+#from world.generate import _generate
 from world.mesh import (
     bakelight, build_meshjit, BLOCK_EMIT,
     BUILD_FACE_V, BUILD_FACE_N, BUILD_FACE_UV, MESH_GRASS_V,
@@ -26,35 +24,6 @@ from world.mesh import (
 
 EMPTY_VOXEL = np.zeros((CHUNK_SZ, CHUNK_H, CHUNK_SZ), dtype=np.uint16)
 EMPTY_LIGHT = np.zeros((CHUNK_SZ, CHUNK_H, CHUNK_SZ), dtype=np.uint8)
-
-
-
-
-class PerlinNoise:
-    def __init__(self, seed=0):
-        # no idea
-        p_base = np.array([
-            151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
-            140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
-            247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
-            57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,
-            74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,
-            60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,
-            65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,
-            200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,
-            52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,
-            207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,
-            119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,
-            129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,
-            218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,
-            81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,
-            184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,
-            222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180
-        ], dtype=np.int32)
-        np.random.seed(seed)
-        np.random.shuffle(p_base)
-        self.p = np.concatenate([p_base, p_base])
-
 
 
 
@@ -72,6 +41,7 @@ class Chunk:
         self.mesh_built = False
         self.mesh_pending = False  # prevent re-queueing while mesh is being built
         self.gen_ready = False
+        self.tint      = None
         self.lighting_settled = False
         self.light_dirty = True
         self.vao = None
@@ -96,63 +66,9 @@ class Chunk:
         
 
 
-        
-        off_x = np.clip(float(self.offset_x), -1e6, 1e6)
-        off_z = np.clip(float(self.offset_z), -1e6, 1e6)
-        biomes = np.zeros((CHUNK_SZ, CHUNK_SZ), dtype=np.int8)
-
-        if self.world.wtype == "flat":
-            y = 0
-            for i, j in FLAT_LAYERS:
-                self.voxels[:, y:y + i, :] = j
-                y += i
-
-        else:
-            _generate(self.voxels, off_x, off_z, self.world.noise.p, biomes)
-
-            if hasattr(self.world, 'trees') and self.world.trees:
-                treetochunk(
-                    self.voxels, self.offset_x, self.offset_z,
-                    self.world.trees, self.world.seed,
-                    self.world.noise.p, self.world.chunker,
-                    CHUNK_SZ, CHUNK_H, SEA_LEVEL,
-                    biomes
-                )
-
-
-            key = (self.x, self.z)
-            if key in self.world.chunker.pending_decorations:
-                for lx, ly, lz, bt in self.world.chunker.pending_decorations[key]:
-
-                    if 0 <= lx < CHUNK_SZ and 0 <= ly < CHUNK_H and 0 <= lz < CHUNK_SZ:
-                        if bt in [7, 8, 9] and self.voxels[lx, ly, lz] in [0, 1]:
-                            self.voxels[lx, ly, lz] = bt
-
-
-                del self.world.chunker.pending_decorations[key]
-
-            if hasattr(self.world, 'rocks') and self.world.rocks:
-                addchunkrocks(
-                    self.voxels, self.offset_x, self.offset_z,
-                    self.world.rocks, self.world.seed,
-                    self.world.noise.p, self.world.chunker,
-                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
-                )
-
-            if hasattr(self.world, 'trees'):
-                grasstochunk(
-                    self.voxels, self.offset_x, self.offset_z,
-                    self.world.seed, self.world.noise.p, biomes,
-                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
-                )
-
-                cactitochunk(
-                    self.voxels, self.offset_x, self.offset_z,
-                    biomes, self.world.seed,
-                    CHUNK_SZ, CHUNK_H, SEA_LEVEL
-                )
-
-
+        #off_x = np.clip(float(self.offset_x), -1e6, 1e6)
+        #off_z = np.clip(float(self.offset_z), -1e6, 1e6)        
+        self.world.chunker.gen.gen(self)
 
 
 
@@ -165,6 +81,7 @@ class Chunk:
         # headless keeps voxels only, no light/mesh
         if self.world.chunker.headless: return
 
+        self.tint = self.world.chunker.gen.tint(self)
         self.bakelight()
 
 
@@ -295,6 +212,9 @@ class Chunk:
 
         # double-buffer: build new buffers first, then atomically swap
         if not hasattr(self.world, 'ctx') or self.world.ctx is None: return
+        if self.tint is not None:
+            self.world.tintmap.put(self)
+            self.tint = None
         nvao, nvbo     = None, None
         ntvao, ntvbo   = None, None
         nvc  = 0

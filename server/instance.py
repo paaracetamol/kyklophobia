@@ -8,7 +8,8 @@ import struct
 import os
 import numpy as np
 from collections import deque
-from world.terrain import ChunkManager, PerlinNoise
+from world.terrain import ChunkManager
+from world import generators
 import config
 from config import P_W, P_H
 from config import (
@@ -118,6 +119,11 @@ class Instance:
         self.port    = port
         self.wname   = wname
         self.seed, self.wtype = config.worldmeta(wname, seed, wtype)
+
+        self.spawnpos = None
+        if self.wtype not in generators.TYPES: 
+            self.wtype = generators.TYPES[0]
+
         self.maxpl   = maxp
         self.motd    = motd
         self.sock    = None
@@ -147,11 +153,11 @@ class Instance:
         class _World:
             def __init__(s, seed):
                 s.seed  = seed
-                s.noise = PerlinNoise(seed=seed)
-                from world.trees import TreeManager
-                from world.decor import RockManager
-                s.trees = TreeManager(assetdir="assets")
-                s.rocks = RockManager(assetdir="assets")
+                #s.noise = PerlinNoise(seed=seed)
+                #from world.trees import TreeManager
+                #from world.decor import RockManager
+                #s.trees = TreeManager(assetdir="assets")
+                #s.rocks = RockManager(assetdir="assets")
                 
 
         self.world     = _World(self.seed)
@@ -643,7 +649,7 @@ class Instance:
                 
 
             # dont burst seed+mods+players at once
-            self.send(p, mkseed(self.seed))
+            self.send(p, mkseed(self.seed, generators.TYPES.index(self.wtype)))
             self.send(p, mksun(self.sunang))
             time.sleep(0.01)
             # mods are baked into the chunk voxels
@@ -669,8 +675,9 @@ class Instance:
                 ))
                 print(f"Restored {p.nm} to ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})")
 
-            elif self.wtype == "flat":
-                self.teleport(p, np.array([0.0, config.FLAT_SPAWN, 0.0]))
+            else:
+                if self.spawnpos is None: self.spawnpos = self.chunker.gen.spawn(self.seed)
+                self.teleport(p, np.array(self.spawnpos))
 
             if pd and 'health' in pd: p.health = max(0, min(MAX_HEALTH, int(pd['health'])))
             if pd and 'hunger' in pd: p.hunger = max(0, min(MAX_HUNGER, int(pd['hunger'])))

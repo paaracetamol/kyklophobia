@@ -49,11 +49,10 @@ class TreeSchem:
 
 
 class TreeManager:
-    def __init__(self, assetdir="assets"):
+    def __init__(self, assetdir=Path(__file__).resolve().parent / "structs"):
         self.assetdir = Path(assetdir)
-        # server runs from repo root, cwd cant be trusted
-        if not self.assetdir.is_dir():
-            self.assetdir = Path(__file__).resolve().parent.parent / "assets"
+        #if not self.assetdir.is_dir():
+        #    self.assetdir = Path(__file__).resolve().parent.parent / "assets"
         self.schems = []
         self.loadschems()
         self.tree_density = 0.03

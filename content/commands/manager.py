@@ -587,14 +587,8 @@ class CommandManager:
 
 
     def cmdlocbiome(self, ctx, args):
-        BIOMES = {
-            "plains":   0,
-            "desert":   1,
-            "snowy":    2,
-            "jungle":   3,
-            "badlands": 4,
-            "forest":   5,
-        }
+        gn     = ctx.world.chunker.gen
+        BIOMES = gn.BIOMES
         if not args:
             raise CommandError(f"Usage: /locatebiome <biome>. Available: {', '.join(BIOMES)}")
 
@@ -606,20 +600,19 @@ class CommandManager:
         tid    = BIOMES[narg]
         pos    = ctx.executor.pos()
         px, pz = float(pos[0]), float(pos[2])
-        noise_p = ctx.world.chunker.world.noise.p
-
-        from world.terrain import locate_biome
-        ctx.info(f"Searching for {narg.capitalize()} biome…")
-        fx, fz = locate_biome(px, pz, tid, noise_p)
+        bn     = narg.replace("_", " ").title()
+        ctx.info(f"Searching for {bn} biome…")
+        fx, fz = gn.locate(px, pz, tid, ctx.world.chunker.world)
+        
         if fx == -1.0 and fz == -1.0:
-            ctx.warn(f"No {narg.capitalize()} biome found within 3200 blocks.")
+            ctx.warn(f"No {bn} biome found within 3200 blocks.")
             return
             
             
         dist = ((fx - px)**2 + (fz - pz)**2) ** 0.5
         #print(fx, fz, dist)
         ctx.ok(
-            f"Nearest {narg.capitalize()} biome at "
+            f"Nearest {bn} biome at "
             f"({int(fx)}, ~, {int(fz)}), {dist:.0f} blocks away."
         )
 
